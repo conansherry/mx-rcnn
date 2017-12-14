@@ -3,7 +3,10 @@ Generate base anchors on index 0
 """
 
 import numpy as np
+from ..cython.anchors import anchors_cython
 
+def anchors_plane(feat_h, feat_w, stride, base_anchor):
+    return anchors_cython(feat_h, feat_w, stride, base_anchor)
 
 def generate_anchors(base_size=16, ratios=[0.5, 1, 2],
                      scales=2 ** np.arange(3, 6)):
@@ -18,6 +21,17 @@ def generate_anchors(base_size=16, ratios=[0.5, 1, 2],
                          for i in xrange(ratio_anchors.shape[0])])
     return anchors
 
+def generate_anchors_fpn(base_size=[64,32,16,8,4], ratios=[0.5, 1, 2],
+                     scales=8):
+    """
+    Generate anchor (reference) windows by enumerating aspect ratios X
+    scales wrt a reference (0, 0, 15, 15) window.
+    """
+    anchors = []
+    for bs in base_size:
+        anchors.append(generate_anchors(bs, ratios, scales))
+
+    return anchors
 
 def _whctrs(anchor):
     """

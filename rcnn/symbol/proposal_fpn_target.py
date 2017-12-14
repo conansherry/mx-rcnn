@@ -8,12 +8,12 @@ import numpy as np
 from distutils.util import strtobool
 
 from rcnn.logger import logger
-from rcnn.io.rcnn import sample_rois
+from rcnn.io.rcnn import sample_rois_fpn
 
 
-class ProposalTargetOperator(mx.operator.CustomOp):
+class ProposalFpnTargetOperator(mx.operator.CustomOp):
     def __init__(self, num_classes, batch_images, batch_rois, fg_fraction):
-        super(ProposalTargetOperator, self).__init__()
+        super(ProposalFpnTargetOperator, self).__init__()
         self._num_classes = num_classes
         self._batch_images = batch_images
         self._batch_rois = batch_rois
@@ -39,33 +39,19 @@ class ProposalTargetOperator(mx.operator.CustomOp):
         # Sanity check: single batch only
         assert np.all(all_rois[:, 0] == 0), 'Only single item batches are supported'
 
-        rois, labels, bbox_targets, bbox_weights = \
-            sample_rois(all_rois, fg_rois_per_image, rois_per_image, self._num_classes, gt_boxes=gt_boxes)
+        proposal_target = sample_rois_fpn(all_rois, fg_rois_per_image, rois_per_image, self._num_classes, gt_boxes=gt_boxes)
 
-        if logger.level == logging.DEBUG:
-            logger.debug("labels: %s" % labels)
-            logger.debug('num fg: {}'.format((labels > 0).sum()))
-            logger.debug('num bg: {}'.format((labels == 0).sum()))
-            self._count += 1
-            self._fg_num += (labels > 0).sum()
-            self._bg_num += (labels == 0).sum()
-            logger.debug("self._count: %d" % self._count)
-            logger.debug('num fg avg: %d' % (self._fg_num / self._count))
-            logger.debug('num bg avg: %d' % (self._bg_num / self._count))
-            logger.debug('ratio: %.3f' % (float(self._fg_num) / float(self._bg_num)))
-
-        for ind, val in enumerate([rois, labels, bbox_targets, bbox_weights]):
+        for ind, val in enumerate(proposal_target):
             self.assign(out_data[ind], req[ind], val)
 
     def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
         self.assign(in_grad[0], req[0], 0)
         self.assign(in_grad[1], req[1], 0)
 
-
-@mx.operator.register('proposal_target')
-class ProposalTargetProp(mx.operator.CustomOpProp):
+@mx.operator.register('proposal_fpn_target')
+class ProposalFpnTargetProp(mx.operator.CustomOpProp):
     def __init__(self, num_classes, batch_images, batch_rois, fg_fraction='0.25'):
-        super(ProposalTargetProp, self).__init__(need_top_grad=False)
+        super(ProposalFpnTargetProp, self).__init__(need_top_grad=False)
         self._num_classes = int(num_classes)
         self._batch_images = int(batch_images)
         self._batch_rois = int(batch_rois)
@@ -75,7 +61,14 @@ class ProposalTargetProp(mx.operator.CustomOpProp):
         return ['rois', 'gt_boxes']
 
     def list_outputs(self):
-        return ['rois_output', 'label', 'bbox_target', 'bbox_weight']
+        RCNN_FEAT_STRIDE = [32, 16, 8, 4]
+        output_list = []
+        for stride in RCNN_FEAT_STRIDE:
+            output_list.append('rois_stride%s_output' % stride)
+            output_list.append('stride%s_label' % stride)
+            output_list.append('bbox_target_stride%s' % stride)
+            output_list.append('bbox_weight_stride%s' % stride)
+        return output_list
 
     def infer_shape(self, in_shape):
         rpn_rois_shape = in_shape[0]
@@ -90,7 +83,7 @@ class ProposalTargetProp(mx.operator.CustomOpProp):
                [output_rois_shape, label_shape, bbox_target_shape, bbox_weight_shape]
 
     def create_operator(self, ctx, shapes, dtypes):
-        return ProposalTargetOperator(self._num_classes, self._batch_images, self._batch_rois, self._fg_fraction)
+        return ProposalFpnTargetOperator(self._num_classes, self._batch_images, self._batch_rois, self._fg_fraction)
 
     def declare_backward_dependency(self, out_grad, in_data, out_data):
         return []

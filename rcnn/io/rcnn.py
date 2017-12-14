@@ -175,3 +175,137 @@ def sample_rois(rois, fg_rois_per_image, rois_per_image, num_classes,
 
     return rois, labels, bbox_targets, bbox_weights
 
+RCNN_FEAT_STRIDE = [32, 16, 8, 4]
+
+def sample_rois_fpn(rois, fg_rois_per_image, rois_per_image, num_classes,
+                    labels=None, overlaps=None, bbox_targets=None, gt_boxes=None):
+    """
+    generate random sample of ROIs comprising foreground and background examples
+    :param rois: all_rois [n, 4]; e2e: [n, 5] with batch_index
+    :param fg_rois_per_image: foreground roi number
+    :param rois_per_image: total roi number
+    :param num_classes: number of classes
+    :param labels: maybe precomputed
+    :param overlaps: maybe precomputed (max_overlaps)
+    :param bbox_targets: maybe precomputed
+    :param gt_boxes: optional for e2e [n, 5] (x1, y1, x2, y2, cls)
+    :return: (rois, labels, bbox_targets, bbox_weights)
+    """
+    DEBUG = False
+    if labels is None:
+        if len(gt_boxes) == 0:
+            gt_boxes = np.zeros((1, 5))
+            gt_assignment = np.zeros((len(rois), ), dtype=np.int32)
+            overlaps = np.zeros((len(rois), ))
+            labels = np.zeros((len(rois), ))
+        else:
+            overlaps = bbox_overlaps(rois[:, 1:].astype(np.float), gt_boxes[:, :4].astype(np.float))
+            gt_assignment = overlaps.argmax(axis=1)
+            overlaps = overlaps.max(axis=1)
+            labels = gt_boxes[gt_assignment, 4]
+
+    num_rois = rois.shape[0]
+    # foreground RoI with FG_THRESH overlap
+    fg_indexes = np.where(overlaps >= config.TRAIN.FG_THRESH)[0]
+    # guard against the case when an image has fewer than fg_rois_per_image foreground RoIs
+    fg_rois_per_this_image = np.minimum(fg_rois_per_image, fg_indexes.size)
+
+    if DEBUG:
+        print 'fg total num:', len(fg_indexes)
+
+    # Sample foreground regions without replacement
+    if len(fg_indexes) > fg_rois_per_this_image:
+        fg_indexes = npr.choice(fg_indexes, size=fg_rois_per_this_image, replace=False)
+
+    # Select background RoIs as those within [BG_THRESH_LO, BG_THRESH_HI)
+    bg_indexes = np.where((overlaps < config.TRAIN.BG_THRESH_HI) & (overlaps >= config.TRAIN.BG_THRESH_LO))[0]
+    if DEBUG:
+        print 'bg total num:', len(bg_indexes)
+    # Compute number of background RoIs to take from this image (guarding against there being fewer than desired)
+    bg_rois_per_this_image = rois_per_image - fg_rois_per_this_image
+    bg_rois_per_this_image = np.minimum(bg_rois_per_this_image, bg_indexes.size)
+    # Sample foreground regions without replacement
+    if len(bg_indexes) > bg_rois_per_this_image:
+        bg_indexes = npr.choice(bg_indexes, size=bg_rois_per_this_image, replace=False)
+    if DEBUG:
+        print 'fg num:', len(fg_indexes)
+        print 'bg num:', len(bg_indexes)
+
+    # bg rois statistics
+    if DEBUG:
+        bg_rois = rois[bg_indexes]
+        bg_rois_area = np.sqrt((bg_rois[:, 3] - bg_rois[:, 1]) * (bg_rois[:, 2] - bg_rois[:, 0]))
+
+        area_threshold = [[np.inf, 448],
+                          [448,    224],
+                          [224,    112],
+                          [112,     0]]
+
+        area_threshold = area_threshold[0:len(RCNN_FEAT_STRIDE)]
+        area_threshold[-1][-1] = 0
+
+        bg_rois_on_levels = dict()
+        for i, s in enumerate(RCNN_FEAT_STRIDE):
+            thd = area_threshold[i]
+            index = np.logical_and(thd[1] <= bg_rois_area, bg_rois_area < thd[0])
+            bg_rois_on_levels.update({'stride%s'%s:np.sum(index)})
+        print bg_rois_on_levels
+
+    # indexes selected
+    keep_indexes = np.append(fg_indexes, bg_indexes)
+
+    neg_idx = np.where(overlaps < config.TRAIN.FG_THRESH)[0]
+    neg_rois = rois[neg_idx]
+
+    # pad more to ensure a fixed minibatch size
+    while keep_indexes.shape[0] < rois_per_image:
+        gap = np.minimum(len(neg_rois), rois_per_image - keep_indexes.shape[0])
+        gap_indexes = npr.choice(range(len(neg_rois)), size=gap, replace=False)
+        keep_indexes = np.append(keep_indexes, neg_idx[gap_indexes])
+
+    # select labels
+    labels = labels[keep_indexes]
+    # set labels of bg_rois to be 0
+    labels[fg_rois_per_this_image:] = 0
+    rois = rois[keep_indexes]
+
+    # load or compute bbox_target
+    if bbox_targets is not None:
+        bbox_target_data = bbox_targets[keep_indexes, :]
+    else:
+        targets = bbox_transform(rois[:, 1:], gt_boxes[gt_assignment[keep_indexes], :4])
+        if config.TRAIN.BBOX_NORMALIZATION_PRECOMPUTED:
+            targets = ((targets - np.array(config.TRAIN.BBOX_MEANS))
+                       / np.array(config.TRAIN.BBOX_STDS))
+        bbox_target_data = np.hstack((labels[:, np.newaxis], targets))
+
+    bbox_targets, bbox_weights = \
+        expand_bbox_regression_targets(bbox_target_data, num_classes)
+
+    # Assign to levels
+
+    rois_area = np.sqrt((rois[:, 3] - rois[:, 1]) * (rois[:, 2] - rois[:, 0]))
+
+    area_threshold = [[np.inf, 448],
+                      [448,    224],
+                      [224,    112],
+                      [112,     0]]
+
+    area_threshold = area_threshold[0:len(RCNN_FEAT_STRIDE)]
+    area_threshold[-1][-1] = 0
+
+    proposal_target = []
+    for i, s in enumerate(RCNN_FEAT_STRIDE):
+        thd = area_threshold[i]
+        index         = np.logical_and(thd[1] <= rois_area, rois_area < thd[0])
+        _rois         = rois[index]
+        _labels       = labels[index]
+        _bbox_targets = bbox_targets[index]
+        _bbox_weights = bbox_weights[index]
+
+        proposal_target.append(_rois)
+        proposal_target.append(_labels)
+        proposal_target.append(_bbox_targets)
+        proposal_target.append(_bbox_weights)
+
+    return proposal_target
