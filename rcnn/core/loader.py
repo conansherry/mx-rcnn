@@ -4,7 +4,7 @@ from mxnet.executor_manager import _split_input_slice
 
 from rcnn.config import config
 from rcnn.io.image import tensor_vstack
-from rcnn.io.rpn import get_rpn_testbatch, get_rpn_batch, assign_anchor
+from rcnn.io.rpn import get_rpn_testbatch, get_rpn_batch, assign_anchor, assign_anchor_fpn
 from rcnn.io.rcnn import get_rcnn_testbatch, get_rcnn_batch
 
 
@@ -395,3 +395,210 @@ class AnchorLoader(mx.io.DataIter):
 
         self.data = [mx.nd.array(all_data[key]) for key in self.data_name]
         self.label = [mx.nd.array(all_label[key]) for key in self.label_name]
+
+class AnchorLoaderFPN(mx.io.DataIter):
+    def __init__(self, feat_sym, roidb, batch_size=1, shuffle=False, ctx=None, work_load_list=None,
+                 feat_stride=[32, 16, 8, 4], anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2), allowed_border=0,
+                 aspect_grouping=False):
+        """
+        This Iter will provide roi data to Fast R-CNN network
+        :param feat_sym: to infer shape of assign_output
+        :param roidb: must be preprocessed
+        :param batch_size: must divide BATCH_SIZE(128)
+        :param shuffle: bool
+        :param ctx: list of contexts
+        :param work_load_list: list of work load
+        :param aspect_grouping: group images with similar aspects
+        :return: AnchorLoader
+        """
+        super(AnchorLoaderFPN, self).__init__()
+
+        # save parameters as properties
+        self.feat_sym = feat_sym
+        self.roidb = roidb
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.ctx = ctx
+        if self.ctx is None:
+            self.ctx = [mx.cpu()]
+        self.work_load_list = work_load_list
+        self.feat_stride = feat_stride
+        self.anchor_scales = anchor_scales
+        self.anchor_ratios = anchor_ratios
+        self.allowed_border = allowed_border
+        self.aspect_grouping = aspect_grouping
+
+        # infer properties from roidb
+        self.size = len(roidb)
+        self.index = np.arange(self.size)
+
+        # decide data and label names
+        # decide data and label names
+        if config.TRAIN.END2END:
+            self.data_name = ['data', 'im_info', 'gt_boxes']
+        else:
+            self.data_name = ['data']
+        self.label_name = ['label', 'bbox_target', 'bbox_weight']
+
+        # status variable for synchronization between get_data and get_label
+        self.cur = 0
+        self.batch = None
+        self.data = None
+        self.label = None
+
+        # get first batch to fill in provide_data and provide_label
+        self.reset()
+        self.get_batch()
+
+    @property
+    def provide_data(self):
+        return [(k, v.shape) for k, v in zip(self.data_name, self.data)]
+
+    @property
+    def provide_label(self):
+        return [(k, v.shape) for k, v in zip(self.label_name, self.label)]
+
+    def reset(self):
+        self.cur = 0
+        if self.shuffle:
+            if self.aspect_grouping:
+                widths = np.array([r['width'] for r in self.roidb])
+                heights = np.array([r['height'] for r in self.roidb])
+                horz = (widths >= heights)
+                vert = np.logical_not(horz)
+                horz_inds = np.where(horz)[0]
+                vert_inds = np.where(vert)[0]
+                # Avoid putting different aspect ratio image into the same bucket,
+                # which may cause bucketing warning.
+                pad_horz = self.batch_size - len(horz_inds) % self.batch_size
+                pad_vert = self.batch_size - len(vert_inds) % self.batch_size
+                horz_inds = np.hstack([horz_inds, horz_inds[:pad_horz]])
+                vert_inds = np.hstack([vert_inds, vert_inds[:pad_vert]])
+                inds = np.hstack((np.random.permutation(horz_inds), np.random.permutation(vert_inds)))
+
+                inds = np.reshape(inds[:], (-1, self.batch_size))
+                row_perm = np.random.permutation(np.arange(inds.shape[0]))
+                inds = np.reshape(inds[row_perm, :], (-1,))
+                self.index = inds
+            else:
+                np.random.shuffle(self.index)
+
+    def iter_next(self):
+        return self.cur + self.batch_size <= self.size
+
+    def next(self):
+        if self.iter_next():
+            self.get_batch()
+            self.cur += self.batch_size
+            return mx.io.DataBatch(data=self.data, label=self.label,
+                                   pad=self.getpad(), index=self.getindex(),
+                                   provide_data=self.provide_data, provide_label=self.provide_label)
+        else:
+            raise StopIteration
+
+    def getindex(self):
+        return self.cur / self.batch_size
+
+    def getpad(self):
+        if self.cur + self.batch_size > self.size:
+            return self.cur + self.batch_size - self.size
+        else:
+            return 0
+
+    def infer_shape(self, max_data_shape=None, max_label_shape=None):
+        """ Return maximum data and label shape for single gpu """
+        if max_data_shape is None:
+            max_data_shape = []
+        if max_label_shape is None:
+            max_label_shape = []
+        max_shapes = dict(max_data_shape + max_label_shape)
+        input_batch_size = max_shapes['data'][0]
+        dummy_boxes = np.zeros((0, 5))
+        dummy_info = [max_shapes['data'][2], max_shapes['data'][3], 1.0]
+
+        # infer shape
+        feat_shape_list = []
+        for i in range(len(self.feat_stride)):
+            _, feat_shape, _ = self.feat_sym[i].infer_shape(**max_shapes)
+            feat_shape = [int(i) for i in feat_shape[0]]
+            feat_shape_list.append(feat_shape)
+
+        label_dict = assign_anchor_fpn(feat_shape_list, dummy_boxes, dummy_info, self.feat_stride,
+                                                   self.anchor_scales, self.anchor_ratios, self.allowed_border)
+        label_list = [label_dict['label'], label_dict['bbox_target'], label_dict['bbox_weight']]
+        label_shape = [(k, tuple([input_batch_size] + list(v.shape[1:]))) for k, v in zip(self.label_name, label_list)]
+        return max_data_shape, label_shape
+
+    def get_batch(self):
+        # slice roidb
+        cur_from = self.cur
+        cur_to = min(cur_from + self.batch_size, self.size)
+        roidb = [self.roidb[self.index[i]] for i in range(cur_from, cur_to)]
+
+        # decide multi device slice
+        work_load_list = self.work_load_list
+        ctx = self.ctx
+        if work_load_list is None:
+            work_load_list = [1] * len(ctx)
+        assert isinstance(work_load_list, list) and len(work_load_list) == len(ctx), \
+            "Invalid settings for work load. "
+        slices = _split_input_slice(self.batch_size, work_load_list)
+
+        # get testing data for multigpu
+        data_list = []
+        label_list = []
+        for islice in slices:
+            iroidb = [roidb[i] for i in range(islice.start, islice.stop)]
+            data, label = get_rpn_batch(iroidb)
+            data_list.append(data)
+            label_list.append(label)
+
+        # pad data first and then assign anchor (read label)
+        data_tensor = tensor_vstack([batch['data'] for batch in data_list])
+        for i_card in range(len(data_list)):
+            data_list[i_card]['data'] = data_tensor[
+                                        i_card * config.TRAIN.BATCH_IMAGES:(1 + i_card) * config.TRAIN.BATCH_IMAGES]
+
+        for data, label in zip(data_list, label_list):
+            data_shape = {k: v.shape for k, v in data.items()}
+            del data_shape['im_info']
+            feat_shape_list = []
+            for s in range(len(self.feat_stride)):
+                _, feat_shape, _ = self.feat_sym[s].infer_shape(**data_shape)
+                feat_shape = [int(i) for i in feat_shape[0]]
+                feat_shape_list.append(feat_shape)
+
+            # add gt_boxes to data for e2e
+            data['gt_boxes'] = label['gt_boxes'][np.newaxis, :, :]
+
+            label['label'] = [0 for i in range(config.TRAIN.BATCH_IMAGES)]
+            label['bbox_target'] = [0 for i in range(config.TRAIN.BATCH_IMAGES)]
+            label['bbox_weight'] = [0 for i in range(config.TRAIN.BATCH_IMAGES)]
+
+            for im_i in range(config.TRAIN.BATCH_IMAGES):
+                im_info = data['im_info'][im_i]
+                gt_boxes = label['gt_boxes']
+                label_dict = \
+                    assign_anchor_fpn(feat_shape_list, gt_boxes, im_info,
+                                  self.feat_stride,
+                                  self.anchor_scales,
+                                  self.anchor_ratios,
+                                  self.allowed_border)
+                label['label'][im_i] = label_dict['label']
+                label['bbox_target'][im_i] = label_dict['bbox_target']
+                label['bbox_weight'][im_i] = label_dict['bbox_weight']
+            label['label'] = np.vstack(label['label'])
+            label['bbox_target'] = np.vstack(label['bbox_target'])
+            label['bbox_weight'] = np.vstack(label['bbox_weight'])
+
+        all_data = dict()
+        for key in self.data_name:
+            all_data[key] = tensor_vstack([batch[key] for batch in data_list])
+
+        all_label = dict()
+        for key in self.label_name:
+            pad = 0 if key == 'weight' else -1
+            all_label[key] = tensor_vstack([batch[key] for batch in label_list], pad=pad)
+        self.data = [mx.nd.array(all_data[key]) for key in self.data_name]
+        self.label = [mx.nd.array(all_label[key]) for key in self.label_name]
+

@@ -74,13 +74,19 @@ class ProposalFpnTargetProp(mx.operator.CustomOpProp):
         rpn_rois_shape = in_shape[0]
         gt_boxes_shape = in_shape[1]
 
-        output_rois_shape = (self._batch_rois, 5)
-        label_shape = (self._batch_rois, )
-        bbox_target_shape = (self._batch_rois, self._num_classes * 4)
-        bbox_weight_shape = (self._batch_rois, self._num_classes * 4)
+        RCNN_FEAT_STRIDE = [32, 16, 8, 4]
+        output_shapes = []
+        for stride in RCNN_FEAT_STRIDE:
+            output_rois_shape = (self._batch_rois, 5)
+            label_shape = (self._batch_rois, )
+            bbox_target_shape = (self._batch_rois, self._num_classes * 4)
+            bbox_weight_shape = (self._batch_rois, self._num_classes * 4)
+            output_shapes.append(output_rois_shape)
+            output_shapes.append(label_shape)
+            output_shapes.append(bbox_target_shape)
+            output_shapes.append(bbox_weight_shape)
 
-        return [rpn_rois_shape, gt_boxes_shape], \
-               [output_rois_shape, label_shape, bbox_target_shape, bbox_weight_shape]
+        return [rpn_rois_shape, gt_boxes_shape], output_shapes
 
     def create_operator(self, ctx, shapes, dtypes):
         return ProposalFpnTargetOperator(self._num_classes, self._batch_images, self._batch_rois, self._fg_fraction)

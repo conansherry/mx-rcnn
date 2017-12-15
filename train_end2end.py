@@ -5,13 +5,23 @@ import numpy as np
 
 from rcnn.logger import logger
 from rcnn.config import config, default, generate_config
-from rcnn.symbol import *
+from rcnn.symbol.symbol_vgg_fpn import *
 from rcnn.core import callback, metric
-from rcnn.core.loader import AnchorLoader
+from rcnn.core.loader import AnchorLoader, AnchorLoaderFPN
 from rcnn.core.module import MutableModule
 from rcnn.utils.load_data import load_gt_roidb, merge_roidb, filter_roidb
 from rcnn.utils.load_model import load_param
 
+# make a bilinear interpolation kernel, return a numpy.ndarray
+def upsample_filt(size):
+    factor = (size + 1) // 2
+    if size % 2 == 1:
+        center = factor - 1.0
+    else:
+        center = factor - 0.5
+    og = np.ogrid[:size, :size]
+    return (1 - abs(og[0] - center) / factor) * \
+           (1 - abs(og[1] - center) / factor)
 
 def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
               lr=0.001, lr_step='5'):
@@ -22,8 +32,13 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
     config.TRAIN.BBOX_NORMALIZATION_PRECOMPUTED = True
 
     # load symbol
-    sym = eval('get_' + args.network + '_train')(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
-    feat_sym = sym.get_internals()['rpn_cls_score_output']
+    sym = eval('get_' + args.network + '_fpn_train')(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
+
+    # feat_sym = sym.get_internals()['rpn_cls_score_output']
+    RPN_FEAT_STRIDE = [32, 16, 8, 4]
+    feat_sym = []
+    for stride in RPN_FEAT_STRIDE:
+        feat_sym.append(sym.get_internals()['rpn_cls_score_stride%s_output' % stride])
 
     # setup multi-gpu
     batch_size = len(ctx)
@@ -41,10 +56,15 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
     roidb = filter_roidb(roidb)
 
     # load training data
-    train_data = AnchorLoader(feat_sym, roidb, batch_size=input_batch_size, shuffle=not args.no_shuffle,
-                              ctx=ctx, work_load_list=args.work_load_list,
-                              feat_stride=config.RPN_FEAT_STRIDE, anchor_scales=config.ANCHOR_SCALES,
-                              anchor_ratios=config.ANCHOR_RATIOS, aspect_grouping=config.TRAIN.ASPECT_GROUPING)
+    # train_data = AnchorLoader(feat_sym, roidb, batch_size=input_batch_size, shuffle=not args.no_shuffle,
+    #                           ctx=ctx, work_load_list=args.work_load_list,
+    #                           feat_stride=config.RPN_FEAT_STRIDE, anchor_scales=config.ANCHOR_SCALES,
+    #                           anchor_ratios=config.ANCHOR_RATIOS, aspect_grouping=config.TRAIN.ASPECT_GROUPING)
+
+    train_data = AnchorLoaderFPN(feat_sym, roidb, batch_size=input_batch_size, shuffle=not args.no_shuffle,
+                                 ctx=ctx, work_load_list=args.work_load_list,
+                                 feat_stride=RPN_FEAT_STRIDE, anchor_scales=config.ANCHOR_SCALES,
+                                 anchor_ratios=config.ANCHOR_RATIOS, aspect_grouping=config.TRAIN.ASPECT_GROUPING)
 
     # infer max shape
     max_data_shape = [('data', (input_batch_size, 3, max([v[0] for v in config.SCALES]), max([v[1] for v in config.SCALES])))]
@@ -65,16 +85,28 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
         arg_params, aux_params = load_param(prefix, begin_epoch, convert=True)
     else:
         arg_params, aux_params = load_param(pretrained, epoch, convert=True)
-        arg_params['rpn_conv_3x3_weight'] = mx.random.normal(0, 0.01, shape=arg_shape_dict['rpn_conv_3x3_weight'])
-        arg_params['rpn_conv_3x3_bias'] = mx.nd.zeros(shape=arg_shape_dict['rpn_conv_3x3_bias'])
-        arg_params['rpn_cls_score_weight'] = mx.random.normal(0, 0.01, shape=arg_shape_dict['rpn_cls_score_weight'])
-        arg_params['rpn_cls_score_bias'] = mx.nd.zeros(shape=arg_shape_dict['rpn_cls_score_bias'])
-        arg_params['rpn_bbox_pred_weight'] = mx.random.normal(0, 0.01, shape=arg_shape_dict['rpn_bbox_pred_weight'])
-        arg_params['rpn_bbox_pred_bias'] = mx.nd.zeros(shape=arg_shape_dict['rpn_bbox_pred_bias'])
-        arg_params['cls_score_weight'] = mx.random.normal(0, 0.01, shape=arg_shape_dict['cls_score_weight'])
-        arg_params['cls_score_bias'] = mx.nd.zeros(shape=arg_shape_dict['cls_score_bias'])
-        arg_params['bbox_pred_weight'] = mx.random.normal(0, 0.001, shape=arg_shape_dict['bbox_pred_weight'])
-        arg_params['bbox_pred_bias'] = mx.nd.zeros(shape=arg_shape_dict['bbox_pred_bias'])
+        for k in sym.list_arguments():
+            if k in data_shape_dict:
+                continue
+            if k not in arg_params:
+                print 'init', k
+                arg_params[k] = mx.nd.zeros(shape=arg_shape_dict[k])
+                if not k.endswith('bias'):
+                    arg_params[k] = mx.random.normal(0, 0.01, shape=arg_params[k].shape)
+                if 'upsampling' in k:
+                    v = arg_params[k].shape
+                    filt = upsample_filt(v[3])
+                    initw = np.zeros(v)
+                    initw[range(v[0]), range(v[1]), :, :] = filt  # becareful here is the slice assing
+                    arg_params[k] = mx.nd.array(initw)
+                if 'rpn' in k or 'rcnn' in k:
+                    arg_params[k] = mx.nd.zeros(shape=arg_shape_dict[k])
+
+        for k in sym.list_auxiliary_states():
+            if k not in aux_params:
+                print 'init', k
+                aux_params[k] = mx.nd.zeros(shape=aux_shape_dict[k])
+                aux_params[k] = mx.random.normal(0, 0.01, shape=aux_params[k].shape)
 
     # check parameter shapes
     for k in sym.list_arguments():

@@ -303,6 +303,15 @@ def sample_rois_fpn(rois, fg_rois_per_image, rois_per_image, num_classes,
         _bbox_targets = bbox_targets[index]
         _bbox_weights = bbox_weights[index]
 
+        if _rois.shape[0] != 0:
+            _rois = np.pad(_rois, [(0, (rois_per_image - _rois.shape[0])), (0, 0)], mode='edge')
+        else:
+            _rois = np.array([[0, 0, 0, 1, 1]])
+            _rois = np.pad(_rois, [(0, (rois_per_image - _rois.shape[0])), (0, 0)], mode='edge')
+        _labels = np.pad(_labels, [(0, (rois_per_image - _labels.shape[0]))], mode='constant', constant_values=-1)
+        _bbox_targets = np.pad(_bbox_targets, [(0, (rois_per_image - _bbox_targets.shape[0])), (0, 0)], mode='constant', constant_values=0)
+        _bbox_weights = np.pad(_bbox_weights, [(0, (rois_per_image - _bbox_weights.shape[0])), (0, 0)], mode='constant', constant_values=0)
+
         proposal_target.append(_rois)
         proposal_target.append(_labels)
         proposal_target.append(_bbox_targets)

@@ -103,7 +103,7 @@ default.test_image_set = '2007_test'
 default.root_path = 'data'
 default.dataset_path = 'data/VOCdevkit'
 # default training
-default.frequent = 20
+default.frequent = 1
 default.kvstore = 'device'
 # default e2e
 default.e2e_prefix = 'model/e2e'

@@ -73,21 +73,27 @@ def get_vgg_conv_down(pool_feat, num_filter=256):
     P5 = mx.symbol.Convolution(data=pool_feat[0], kernel=(1, 1), num_filter=num_filter, name="P5_lateral")
 
     # P5 2x upsampling + C4 = P4
-    P5_up = mx.symbol.UpSampling(P5, scale=2, sample_type='nearest', workspace=512, name='P5_upsampling', num_args=1)
+    P5_up = mx.sym.Deconvolution(data=P5, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
+                                 name='P5_upsampling')
+    # P5_up = mx.symbol.UpSampling(P5, scale=2, sample_type='nearest', workspace=512, name='P5_upsampling', num_args=1)
     P4_la = mx.symbol.Convolution(data=pool_feat[1], kernel=(1, 1), num_filter=num_filter, name="P4_lateral")
     P5_clip = mx.symbol.Crop(*[P5_up, P4_la], name="P4_clip")
     P4 = mx.sym.ElementWiseSum(*[P5_clip, P4_la], name="P4_sum")
     P4 = mx.symbol.Convolution(data=P4, kernel=(3, 3), pad=(1, 1), num_filter=num_filter, name="P4_aggregate")
 
     # P4 2x upsampling + C3 = P3
-    P4_up = mx.symbol.UpSampling(P4, scale=2, sample_type='nearest', workspace=512, name='P4_upsampling', num_args=1)
+    P4_up = mx.sym.Deconvolution(data=P4, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
+                                 name='P4_upsampling')
+    # P4_up = mx.symbol.UpSampling(P4, scale=2, sample_type='nearest', workspace=512, name='P4_upsampling', num_args=1)
     P3_la = mx.symbol.Convolution(data=pool_feat[2], kernel=(1, 1), num_filter=num_filter, name="P3_lateral")
     P4_clip = mx.symbol.Crop(*[P4_up, P3_la], name="P3_clip")
     P3 = mx.sym.ElementWiseSum(*[P4_clip, P3_la], name="P3_sum")
     P3 = mx.symbol.Convolution(data=P3, kernel=(3, 3), pad=(1, 1), num_filter=num_filter, name="P3_aggregate")
 
     # P3 2x upsampling + C2 = P2
-    P3_up = mx.symbol.UpSampling(P3, scale=2, sample_type='nearest', workspace=512, name='P3_upsampling', num_args=1)
+    P3_up = mx.sym.Deconvolution(data=P3, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
+                                 name='P3_upsampling')
+    # P3_up = mx.symbol.UpSampling(P3, scale=2, sample_type='nearest', workspace=512, name='P3_upsampling', num_args=1)
     P2_la = mx.symbol.Convolution(data=pool_feat[3], kernel=(1, 1), num_filter=num_filter, name="P2_lateral")
     P3_clip = mx.symbol.Crop(*[P3_up, P2_la], name="P2_clip")
     P2 = mx.sym.ElementWiseSum(*[P3_clip, P2_la], name="P2_sum")
@@ -225,16 +231,19 @@ def get_vgg_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANC
                                               name='rpn_bbox_pred_stride%s' % stride)
 
         # prepare rpn data
-        rpn_cls_score_reshape = mx.symbol.Reshape(data=rpn_cls_score,
-                                                  shape=(0, 2, -1, 0),
+        rpn_cls_score_reshape_for_loss = mx.symbol.Reshape(data=rpn_cls_score,
+                                                  shape=(0, 2, -1),
                                                   name="rpn_cls_score_reshape_stride%s" % stride)
-        rpn_bbox_pred_reshape = mx.symbol.Reshape(data=rpn_bbox_pred,
-                                                  shape=(0, 0, -1, 0),
+        rpn_bbox_pred_reshape_for_loss = mx.symbol.Reshape(data=rpn_bbox_pred,
+                                                  shape=(0, 0, -1),
                                                   name="rpn_bbox_pred_reshape_stride%s" % stride)
 
-        rpn_bbox_pred_list.append(rpn_bbox_pred_reshape)
-        rpn_cls_score_list.append(rpn_cls_score_reshape)
+        rpn_bbox_pred_list.append(rpn_bbox_pred_reshape_for_loss)
+        rpn_cls_score_list.append(rpn_cls_score_reshape_for_loss)
 
+        rpn_cls_score_reshape = mx.symbol.Reshape(data=rpn_cls_score,
+                                                           shape=(0, 2, -1, 0),
+                                                           name="rpn_cls_score_reshape_stride%s" % stride)
         rpn_cls_prob = mx.symbol.SoftmaxActivation(data=rpn_cls_score_reshape,
                                                    mode="channel",
                                                    name="rpn_cls_prob_stride%s" % stride)
@@ -263,13 +272,14 @@ def get_vgg_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANC
                                     grad_scale=1.0 / config.TRAIN.RPN_BATCH_SIZE)
 
     # ROI proposal
+    RPN_MIN_SIZE = RPN_FEAT_STRIDE
     args_dict = dict(rpn_cls_prob_dict.items() + rpn_bbox_pred_dict.items())
     aux_dict = {'im_info': im_info, 'name': 'rois',
                 'op_type': 'proposal_fpn', 'output_score': False,
                 'feat_stride': RPN_FEAT_STRIDE, 'scales': tuple(config.ANCHOR_SCALES),
                 'rpn_pre_nms_top_n': config.TRAIN.RPN_PRE_NMS_TOP_N,
                 'rpn_post_nms_top_n': config.TRAIN.RPN_POST_NMS_TOP_N,
-                'rpn_min_size': config.TRAIN.RPN_MIN_SIZE,
+                'rpn_min_size': RPN_MIN_SIZE,
                 'threshold': config.TRAIN.RPN_NMS_THRESH}
     # Proposal
     rois = mx.symbol.Custom(**dict(args_dict.items() + aux_dict.items()))
@@ -281,6 +291,12 @@ def get_vgg_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANC
                              batch_rois=config.TRAIN.BATCH_ROIS, fg_fraction=config.TRAIN.FG_FRACTION)
 
     RCNN_FEAT_STRIDE = RPN_FEAT_STRIDE
+
+    # rois = proposal_target[0]
+    # label = proposal_target[1]
+    # bbox_target = proposal_target[2]
+    # bbox_weight = proposal_target[3]
+
     rois_dict = dict()
     label_dict = dict()
     bbox_target_dict = dict()
@@ -311,7 +327,7 @@ def get_vgg_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANC
     for stride in RCNN_FEAT_STRIDE:
         roi_pool = mx.symbol.ROIPooling(
             name='roi_pool', data=conv_fpn_feat['stride%s' % stride], rois=rois_dict['rois_stride%s' % stride],
-            pooled_size=(14, 14),
+            pooled_size=(7, 7),
             spatial_scale=1.0 / stride)
 
         # group 6
@@ -346,7 +362,14 @@ def get_vgg_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANC
 
     bbox_loss = mx.sym.MakeLoss(name='bbox_loss', data=bbox_loss_, grad_scale=1.0 / config.TRAIN.BATCH_ROIS)
 
-    loss_group = [rpn_cls_prob, rpn_bbox_loss, cls_prob, bbox_loss]
+    # reshape output
+    label = mx.symbol.Reshape(data=label, shape=(config.TRAIN.BATCH_IMAGES, -1), name='label_reshape')
+    cls_prob = mx.symbol.Reshape(data=cls_prob, shape=(config.TRAIN.BATCH_IMAGES, -1, num_classes),
+                                 name='cls_prob_reshape')
+    bbox_loss = mx.symbol.Reshape(data=bbox_loss, shape=(config.TRAIN.BATCH_IMAGES, -1, 4 * num_classes),
+                                  name='bbox_loss_reshape')
+
+    loss_group = [rpn_cls_prob, rpn_bbox_loss, cls_prob, bbox_loss, mx.symbol.BlockGrad(label)]
     group = mx.symbol.Group(loss_group)
     return group
 
