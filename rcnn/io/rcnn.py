@@ -14,10 +14,11 @@ roidb extended format [image_index]
 
 import numpy as np
 import numpy.random as npr
+import cv2
 
 from ..config import config
 from ..io.image import get_image, tensor_vstack
-from ..processing.bbox_transform import bbox_overlaps, bbox_transform
+from ..processing.bbox_transform import bbox_overlaps, bbox_transform, bbox_pred
 from ..processing.bbox_regression import expand_bbox_regression_targets
 
 
@@ -175,8 +176,6 @@ def sample_rois(rois, fg_rois_per_image, rois_per_image, num_classes,
 
     return rois, labels, bbox_targets, bbox_weights
 
-RCNN_FEAT_STRIDE = [32, 16, 8, 4]
-
 def sample_rois_fpn(rois, fg_rois_per_image, rois_per_image, num_classes,
                     labels=None, overlaps=None, bbox_targets=None, gt_boxes=None):
     """
@@ -241,11 +240,11 @@ def sample_rois_fpn(rois, fg_rois_per_image, rois_per_image, num_classes,
                           [224,    112],
                           [112,     0]]
 
-        area_threshold = area_threshold[0:len(RCNN_FEAT_STRIDE)]
+        area_threshold = area_threshold[0:len(config.RCNN_FEAT_STRIDE)]
         area_threshold[-1][-1] = 0
 
         bg_rois_on_levels = dict()
-        for i, s in enumerate(RCNN_FEAT_STRIDE):
+        for i, s in enumerate(config.RCNN_FEAT_STRIDE):
             thd = area_threshold[i]
             index = np.logical_and(thd[1] <= bg_rois_area, bg_rois_area < thd[0])
             bg_rois_on_levels.update({'stride%s'%s:np.sum(index)})
@@ -284,24 +283,36 @@ def sample_rois_fpn(rois, fg_rois_per_image, rois_per_image, num_classes,
 
     # Assign to levels
 
-    rois_area = np.sqrt((rois[:, 3] - rois[:, 1]) * (rois[:, 2] - rois[:, 0]))
+    rois_area = np.sqrt((rois[:, 4] - rois[:, 2]) * (rois[:, 3] - rois[:, 1]))
 
     area_threshold = [[np.inf, 448],
                       [448,    224],
                       [224,    112],
                       [112,     0]]
 
-    area_threshold = area_threshold[0:len(RCNN_FEAT_STRIDE)]
+    area_threshold = area_threshold[0:len(config.RCNN_FEAT_STRIDE)]
     area_threshold[-1][-1] = 0
 
     proposal_target = []
-    for i, s in enumerate(RCNN_FEAT_STRIDE):
+    for i, s in enumerate(config.RCNN_FEAT_STRIDE):
         thd = area_threshold[i]
         index         = np.logical_and(thd[1] <= rois_area, rois_area < thd[0])
         _rois         = rois[index]
         _labels       = labels[index]
         _bbox_targets = bbox_targets[index]
         _bbox_weights = bbox_weights[index]
+
+        tmp_blob = config.TRAIN.IMAGE_BLOB.copy()
+        pos_index = np.where(_labels != 0)[0]
+        for tmp_index in pos_index:
+            cv2.rectangle(tmp_blob, (_rois[tmp_index, 1], _rois[tmp_index, 2]), (_rois[tmp_index, 3], _rois[tmp_index, 4]), (0, 255, 0))
+        neg_index = np.where(_labels == 0)[0]
+        for tmp_index in neg_index:
+            cv2.rectangle(tmp_blob, (_rois[tmp_index, 1], _rois[tmp_index, 2]), (_rois[tmp_index, 3], _rois[tmp_index, 4]), (0, 0, 255))
+        for tmp_gt in gt_boxes:
+            cv2.rectangle(tmp_blob, (tmp_gt[0], tmp_gt[1]), (tmp_gt[2], tmp_gt[3]), (255, 0, 0), 2)
+        cv2.imshow('first%s' % s, tmp_blob)
+        cv2.waitKey()
 
         if _rois.shape[0] != 0:
             _rois = np.pad(_rois, [(0, (rois_per_image - _rois.shape[0])), (0, 0)], mode='edge')

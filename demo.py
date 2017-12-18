@@ -6,6 +6,7 @@ import numpy as np
 from rcnn.logger import logger
 from rcnn.config import config
 from rcnn.symbol import get_vgg_test, get_vgg_rpn_test
+from rcnn.symbol.symbol_vgg_fpn import get_vgg_fpn_test
 from rcnn.io.image import resize, transform
 from rcnn.core.tester import Predictor, im_detect, im_proposal, vis_all_detection, draw_all_detection
 from rcnn.utils.load_model import load_param
@@ -134,7 +135,7 @@ def parse_args():
 def main():
     args = parse_args()
     ctx = mx.gpu(args.gpu)
-    symbol = get_vgg_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
+    symbol = get_vgg_fpn_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
     predictor = get_net(symbol, args.prefix, args.epoch, ctx)
     demo_net(predictor, args.image, args.vis)
 

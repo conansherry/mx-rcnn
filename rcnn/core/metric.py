@@ -62,6 +62,10 @@ class RCNNAccMetric(mx.metric.EvalMetric):
         pred_label = pred.asnumpy().reshape(-1, last_dim).argmax(axis=1).astype('int32')
         label = label.asnumpy().reshape(-1,).astype('int32')
 
+        no_ignore_index = np.where(label != -1)[0]
+        pred_label = pred_label[no_ignore_index]
+        label = label[no_ignore_index]
+
         self.sum_metric += np.sum(pred_label.flat == label.flat)
         self.num_inst += len(pred_label.flat)
 
@@ -109,6 +113,11 @@ class RCNNLogLossMetric(mx.metric.EvalMetric):
         last_dim = pred.shape[-1]
         pred = pred.asnumpy().reshape(-1, last_dim)
         label = label.asnumpy().reshape(-1,).astype('int32')
+
+        no_ignore_index = np.where(label != -1)[0]
+        pred = pred[no_ignore_index]
+        label = label[no_ignore_index]
+
         cls = pred[np.arange(label.shape[0]), label]
 
         cls += 1e-14

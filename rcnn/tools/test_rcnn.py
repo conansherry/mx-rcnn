@@ -5,6 +5,7 @@ import mxnet as mx
 from ..logger import logger
 from ..config import config, default, generate_config
 from ..symbol import *
+from ..symbol.symbol_vgg_fpn import get_vgg_fpn_test
 from ..dataset import *
 from ..core.loader import TestLoader
 from ..core.tester import Predictor, pred_eval

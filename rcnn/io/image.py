@@ -29,6 +29,9 @@ def get_image(roidb):
         target_size = config.SCALES[scale_ind][0]
         max_size = config.SCALES[scale_ind][1]
         im, im_scale = resize(im, target_size, max_size, stride=config.IMAGE_STRIDE)
+
+        config.TRAIN.IMAGE_BLOB = im.copy()
+
         im_tensor = transform(im, config.PIXEL_MEANS)
         processed_ims.append(im_tensor)
         im_info = [im_tensor.shape[2], im_tensor.shape[3], im_scale]

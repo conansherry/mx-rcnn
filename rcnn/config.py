@@ -6,9 +6,10 @@ config = edict()
 # network related params
 config.PIXEL_MEANS = np.array([103.939, 116.779, 123.68])
 config.IMAGE_STRIDE = 0
-config.RPN_FEAT_STRIDE = 16
-config.RCNN_FEAT_STRIDE = 16
+config.RPN_FEAT_STRIDE = [32, 16, 8, 4]
+config.RCNN_FEAT_STRIDE = [32, 16, 8, 4]
 config.FIXED_PARAMS = ['conv1', 'conv2']
+config.FIXED_PARAMS = []
 config.FIXED_PARAMS_SHARED = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5']
 
 # dataset related params
@@ -19,6 +20,8 @@ config.ANCHOR_RATIOS = (0.5, 1, 2)
 config.NUM_ANCHORS = len(config.ANCHOR_SCALES) * len(config.ANCHOR_RATIOS)
 
 config.TRAIN = edict()
+
+config.TRAIN.IMAGE_BLOB = None
 
 # R-CNN and RPN
 # size of images for each device, 2 for rcnn, 1 for rpn and e2e
@@ -95,7 +98,7 @@ default = edict()
 default.network = 'vgg'
 default.pretrained = 'model/vgg16'
 default.pretrained_epoch = 0
-default.base_lr = 0.001
+default.base_lr = 0.0001
 # default dataset
 default.dataset = 'PascalVOC'
 default.image_set = '2007_trainval'
@@ -103,11 +106,11 @@ default.test_image_set = '2007_test'
 default.root_path = 'data'
 default.dataset_path = 'data/VOCdevkit'
 # default training
-default.frequent = 1
+default.frequent = 20
 default.kvstore = 'device'
 # default e2e
 default.e2e_prefix = 'model/e2e'
-default.e2e_epoch = 10
+default.e2e_epoch = 20
 default.e2e_lr = default.base_lr
 default.e2e_lr_step = '7'
 # default rpn
@@ -125,6 +128,8 @@ default.rcnn_lr_step = '6'
 network = edict()
 
 network.vgg = edict()
+
+network.vgg_fpn = edict()
 
 network.resnet = edict()
 network.resnet.pretrained = 'model/resnet-101'

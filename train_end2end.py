@@ -35,9 +35,8 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
     sym = eval('get_' + args.network + '_fpn_train')(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
 
     # feat_sym = sym.get_internals()['rpn_cls_score_output']
-    RPN_FEAT_STRIDE = [32, 16, 8, 4]
     feat_sym = []
-    for stride in RPN_FEAT_STRIDE:
+    for stride in config.RPN_FEAT_STRIDE:
         feat_sym.append(sym.get_internals()['rpn_cls_score_stride%s_output' % stride])
 
     # setup multi-gpu
@@ -63,7 +62,7 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
 
     train_data = AnchorLoaderFPN(feat_sym, roidb, batch_size=input_batch_size, shuffle=not args.no_shuffle,
                                  ctx=ctx, work_load_list=args.work_load_list,
-                                 feat_stride=RPN_FEAT_STRIDE, anchor_scales=config.ANCHOR_SCALES,
+                                 feat_stride=config.RPN_FEAT_STRIDE, anchor_scales=config.ANCHOR_SCALES,
                                  anchor_ratios=config.ANCHOR_RATIOS, aspect_grouping=config.TRAIN.ASPECT_GROUPING)
 
     # infer max shape
@@ -99,8 +98,8 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
                     initw = np.zeros(v)
                     initw[range(v[0]), range(v[1]), :, :] = filt  # becareful here is the slice assing
                     arg_params[k] = mx.nd.array(initw)
-                if 'rpn' in k or 'rcnn' in k:
-                    arg_params[k] = mx.nd.zeros(shape=arg_shape_dict[k])
+                # if 'rpn' in k or 'rcnn' in k:
+                #     arg_params[k] = mx.nd.zeros(shape=arg_shape_dict[k])
 
         for k in sym.list_auxiliary_states():
             if k not in aux_params:
@@ -191,7 +190,7 @@ def parse_args():
     parser.add_argument('--pretrained', help='pretrained model prefix', default=default.pretrained, type=str)
     parser.add_argument('--pretrained_epoch', help='pretrained model epoch', default=default.pretrained_epoch, type=int)
     parser.add_argument('--prefix', help='new model prefix', default=default.e2e_prefix, type=str)
-    parser.add_argument('--begin_epoch', help='begin epoch of training, use with resume', default=0, type=int)
+    parser.add_argument('--begin_epoch', help='begin epoch of training, use with resume', default=1, type=int)
     parser.add_argument('--end_epoch', help='end epoch of training', default=default.e2e_epoch, type=int)
     parser.add_argument('--lr', help='base learning rate', default=default.e2e_lr, type=float)
     parser.add_argument('--lr_step', help='learning rate steps (in epoch)', default=default.e2e_lr_step, type=str)

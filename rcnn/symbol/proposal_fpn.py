@@ -123,12 +123,10 @@ class ProposalFPNOperator(mx.operator.CustomOp):
         if self._output_score:
             self.assign(out_data[1], req[1], scores.astype(np.float32, copy=False))
 
-
     def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
         # forward only currently
-        self.assign(in_grad[0], req[0], 0)
-        self.assign(in_grad[1], req[1], 0)
-        self.assign(in_grad[2], req[2], 0)
+        for i in range(len(self._feat_stride_fpn) * 2 + 1):
+            self.assign(in_grad[i], req[i], 0)
 
     @staticmethod
     def _filter_boxes(boxes, min_size):
@@ -172,9 +170,9 @@ class ProposalFPNProp(mx.operator.CustomOpProp):
     def list_arguments(self):
         args_list = []
         for s in np.fromstring(self._feat_stride_fpn[1:-1], dtype=int, sep=','):
-            args_list.append('cls_prob_stride%s'%s)
+            args_list.append('rpn_cls_prob_stride%s'%s)
         for s in np.fromstring(self._feat_stride_fpn[1:-1], dtype=int, sep=','):
-            args_list.append('bbox_pred_stride%s' % s)
+            args_list.append('rpn_bbox_pred_stride%s' % s)
         args_list.append('im_info')
 
         return args_list

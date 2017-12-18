@@ -9,7 +9,7 @@ from distutils.util import strtobool
 
 from rcnn.logger import logger
 from rcnn.io.rcnn import sample_rois_fpn
-
+from rcnn.config import config
 
 class ProposalFpnTargetOperator(mx.operator.CustomOp):
     def __init__(self, num_classes, batch_images, batch_rois, fg_fraction):
@@ -61,9 +61,8 @@ class ProposalFpnTargetProp(mx.operator.CustomOpProp):
         return ['rois', 'gt_boxes']
 
     def list_outputs(self):
-        RCNN_FEAT_STRIDE = [32, 16, 8, 4]
         output_list = []
-        for stride in RCNN_FEAT_STRIDE:
+        for stride in config.RCNN_FEAT_STRIDE:
             output_list.append('rois_stride%s_output' % stride)
             output_list.append('stride%s_label' % stride)
             output_list.append('bbox_target_stride%s' % stride)
@@ -74,9 +73,8 @@ class ProposalFpnTargetProp(mx.operator.CustomOpProp):
         rpn_rois_shape = in_shape[0]
         gt_boxes_shape = in_shape[1]
 
-        RCNN_FEAT_STRIDE = [32, 16, 8, 4]
         output_shapes = []
-        for stride in RCNN_FEAT_STRIDE:
+        for stride in config.RCNN_FEAT_STRIDE:
             output_rois_shape = (self._batch_rois, 5)
             label_shape = (self._batch_rois, )
             bbox_target_shape = (self._batch_rois, self._num_classes * 4)

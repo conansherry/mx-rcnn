@@ -20,6 +20,7 @@ from .image import get_image, tensor_vstack
 from ..processing.generate_anchor import generate_anchors, anchors_plane
 from ..processing.bbox_transform import bbox_overlaps, bbox_transform
 
+import cv2
 
 def get_rpn_testbatch(roidb):
     """
@@ -287,8 +288,8 @@ def assign_anchor_fpn(feat_shape, gt_boxes, im_info, feat_strides=[64,32,16,8,4]
                                (all_anchors[:, 2] < im_info[1] + allowed_border) &
                                (all_anchors[:, 3] < im_info[0] + allowed_border))[0]
         if DEBUG:
-            print 'total_anchors', total_anchors
-            print 'inds_inside', len(inds_inside)
+            print 'total_anchors stride%s' % feat_stride, total_anchors
+            print 'inds_inside stride%s' % feat_stride, len(inds_inside)
 
         # keep only inside anchors
         anchors = all_anchors[inds_inside, :]
@@ -338,8 +339,6 @@ def assign_anchor_fpn(feat_shape, gt_boxes, im_info, feat_strides=[64,32,16,8,4]
     fg_inds = np.where(labels == 1)[0]
     if len(fg_inds) > num_fg:
         disable_inds = npr.choice(fg_inds, size=(len(fg_inds) - num_fg), replace=False)
-        if DEBUG:
-            disable_inds = fg_inds[:(len(fg_inds) - num_fg)]
         labels[disable_inds] = -1
 
     # subsample negative labels if we have too many
@@ -347,9 +346,22 @@ def assign_anchor_fpn(feat_shape, gt_boxes, im_info, feat_strides=[64,32,16,8,4]
     bg_inds = np.where(labels == 0)[0]
     if len(bg_inds) > num_bg:
         disable_inds = npr.choice(bg_inds, size=(len(bg_inds) - num_bg), replace=False)
-        if DEBUG:
-            disable_inds = bg_inds[:(len(bg_inds) - num_bg)]
         labels[disable_inds] = -1
+
+    # tmp_blob = config.TRAIN.IMAGE_BLOB.copy()
+    # pos_index = np.where(labels == 1)[0]
+    # for tmp_index in pos_index:
+    #     cv2.rectangle(tmp_blob, (anchors[tmp_index, 0], anchors[tmp_index, 1]), (anchors[tmp_index, 2], anchors[tmp_index, 3]),
+    #                   (0, 255, 0))
+    # neg_index = np.where(labels == 0)[0]
+    # for tmp_index in neg_index:
+    #     cv2.rectangle(tmp_blob, (anchors[tmp_index, 0], anchors[tmp_index, 1]), (anchors[tmp_index, 2], anchors[tmp_index, 3]),
+    #                   (0, 0, 255))
+    # for i in xrange(len(gt_boxes)):
+    #     [x1, y1, x2, y2] = gt_boxes[i, :-1].astype(np.int32)
+    #     cv2.rectangle(tmp_blob, (x1, y1), (x2, y2), (123, 13, 33), 2)
+    # cv2.imshow('rpn', tmp_blob)
+    # cv2.waitKey()
 
     bbox_targets = np.zeros((len(inds_inside), 4), dtype=np.float32)
     if gt_boxes.size > 0:
@@ -366,6 +378,7 @@ def assign_anchor_fpn(feat_shape, gt_boxes, im_info, feat_strides=[64,32,16,8,4]
         stds = np.sqrt(_squared_sums / _counts - means ** 2)
         print 'means', means
         print 'stdevs', stds
+        print '_sums', _sums
     # map up to original set of anchors
     labels = _unmap(labels, total_anchors, inds_inside, fill=-1)
     bbox_targets = _unmap(bbox_targets, total_anchors, inds_inside, fill=0)
