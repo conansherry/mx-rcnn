@@ -108,6 +108,81 @@ def get_resnet_conv_down(conv_feat, num_filter=256):
 
     return conv_fpn_feat, [P5, P4, P3, P2]
 
+def get_resnet_fpn_rpn(num_anchors=config.NUM_ANCHORS):
+    data = mx.symbol.Variable(name="data")
+    rpn_label = mx.symbol.Variable(name='label')
+    rpn_bbox_target = mx.symbol.Variable(name='bbox_target')
+    rpn_bbox_weight = mx.symbol.Variable(name='bbox_weight')
+
+    # begin share weights
+    rpn_conv_weight = mx.symbol.Variable('rpn_conv_weight')
+    rpn_conv_bias = mx.symbol.Variable('rpn_conv_bias')
+    rpn_conv_cls_weight = mx.symbol.Variable('rpn_conv_cls_weight')
+    rpn_conv_cls_bias = mx.symbol.Variable('rpn_conv_cls_bias')
+    rpn_conv_bbox_weight = mx.symbol.Variable('rpn_conv_bbox_weight')
+    rpn_conv_bbox_bias = mx.symbol.Variable('rpn_conv_bbox_bias')
+    # end share weights
+
+    # shared convolutional layers, bottom up
+    conv_feat = get_resnet_conv(data)
+    # shared convolutional layers, top down
+    conv_fpn_feat, _ = get_resnet_conv_down(conv_feat)
+
+    rpn_cls_score_list = []
+    rpn_bbox_pred_list = []
+    for stride in config.RPN_FEAT_STRIDE:
+        rpn_conv = mx.symbol.Convolution(data=conv_fpn_feat['stride%s'%stride],
+                                         kernel=(3, 3), pad=(1, 1),
+                                         num_filter=512,
+                                         weight=rpn_conv_weight,
+                                         bias=rpn_conv_bias,
+                                         name='rpn_conv_3x3_stride%s' % stride)
+        rpn_relu = mx.symbol.Activation(data=rpn_conv, act_type="relu", name="rpn_relu_stride%s" % stride)
+        rpn_cls_score = mx.symbol.Convolution(data=rpn_relu,
+                                              kernel=(1, 1), pad=(0, 0),
+                                              num_filter=2 * num_anchors,
+                                              weight=rpn_conv_cls_weight,
+                                              bias=rpn_conv_cls_bias,
+                                              name="rpn_cls_score_stride%s" % stride)
+        rpn_bbox_pred = mx.symbol.Convolution(data=rpn_relu,
+                                              kernel=(1, 1), pad=(0, 0),
+                                              num_filter=4 * num_anchors,
+                                              weight=rpn_conv_bbox_weight,
+                                              bias=rpn_conv_bbox_bias,
+                                              name='rpn_bbox_pred_stride%s' % stride)
+
+        # prepare rpn data
+        rpn_cls_score_reshape_for_loss = mx.symbol.Reshape(data=rpn_cls_score,
+                                                  shape=(0, 2, -1),
+                                                  name="rpn_cls_score_reshape_for_loss_stride%s" % stride)
+        rpn_bbox_pred_reshape_for_loss = mx.symbol.Reshape(data=rpn_bbox_pred,
+                                                  shape=(0, 0, -1),
+                                                  name="rpn_bbox_pred_reshape_for_loss_stride%s" % stride)
+
+        rpn_bbox_pred_list.append(rpn_bbox_pred_reshape_for_loss)
+        rpn_cls_score_list.append(rpn_cls_score_reshape_for_loss)
+
+    # concat output of each level
+    rpn_bbox_pred_concat = mx.symbol.concat(*rpn_bbox_pred_list, dim=2, name='rpn_bbox_prex_concat')
+    rpn_cls_score_concat = mx.symbol.concat(*rpn_cls_score_list, dim=2, name='rpn_cls_score_concat')
+
+    # loss
+    rpn_cls_prob = mx.symbol.SoftmaxOutput(data=rpn_cls_score_concat,
+                                           label=rpn_label,
+                                           multi_output=True,
+                                           normalization='valid', use_ignore=True, ignore_label=-1,
+                                           name='rpn_cls_prob')
+
+    rpn_bbox_loss_ = rpn_bbox_weight * mx.symbol.smooth_l1(name='rpn_bbox_loss_', scalar=3.0,
+                                                           data=(rpn_bbox_pred_concat - rpn_bbox_target))
+
+    rpn_bbox_loss = mx.sym.MakeLoss(name='rpn_bbox_loss', data=rpn_bbox_loss_,
+                                    grad_scale=1.0 / config.TRAIN.RPN_BATCH_SIZE)
+
+    loss_group = [rpn_cls_prob, rpn_bbox_loss]
+    group = mx.symbol.Group(loss_group)
+    return group
+
 def get_resnet_fpn_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS):
     data = mx.symbol.Variable(name="data")
     im_info = mx.symbol.Variable(name="im_info")
@@ -177,7 +252,7 @@ def get_resnet_fpn_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_A
                 'feat_stride':config.RPN_FEAT_STRIDE,'scales':tuple(config.ANCHOR_SCALES),
                 'rpn_pre_nms_top_n':config.TEST.RPN_PRE_NMS_TOP_N,
                 'rpn_post_nms_top_n':config.TEST.RPN_POST_NMS_TOP_N,
-                'rpn_min_size':config.TEST.RPN_MIN_SIZE,
+                'rpn_min_size':config.RPN_FEAT_STRIDE,
                 'threshold':config.TEST.RPN_NMS_THRESH}
     # Proposal
     rois = mx.symbol.Custom(**dict(args_dict.items()+aux_dict.items()))
@@ -322,7 +397,7 @@ def get_resnet_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_
                 'feat_stride': config.RPN_FEAT_STRIDE, 'scales': tuple(config.ANCHOR_SCALES),
                 'rpn_pre_nms_top_n': config.TRAIN.RPN_PRE_NMS_TOP_N,
                 'rpn_post_nms_top_n': config.TRAIN.RPN_POST_NMS_TOP_N,
-                'rpn_min_size': config.TRAIN.RPN_MIN_SIZE,
+                'rpn_min_size': config.RPN_FEAT_STRIDE,
                 'threshold': config.TRAIN.RPN_NMS_THRESH}
     # Proposal
     rois = mx.symbol.Custom(**dict(args_dict.items() + aux_dict.items()))
@@ -368,16 +443,32 @@ def get_resnet_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_
 
         # group 6
         flatten = mx.symbol.Flatten(data=roi_pool, name="flatten_stride%s" % stride)
-        fc6 = mx.symbol.FullyConnected(data=flatten, num_hidden=1024, name="fc6_stride%s" % stride, weight=rcnn_fc6_weight, bias=rcnn_fc6_bias)
+        fc6 = mx.symbol.FullyConnected(data=flatten, num_hidden=1024,
+                                       weight=rcnn_fc6_weight,
+                                       bias=rcnn_fc6_bias,
+                                       name="rcnn_fc6_stride%s" % stride
+                                       )
         relu6 = mx.symbol.Activation(data=fc6, act_type="relu", name="relu6_stride%s" % stride)
         drop6 = mx.symbol.Dropout(data=relu6, p=0.5, name="drop6_stride%s" % stride)
         # group 7
-        fc7 = mx.symbol.FullyConnected(data=drop6, num_hidden=1024, name="fc7_stride%s" % stride, weight=rcnn_fc7_weight, bias=rcnn_fc7_bias)
+        fc7 = mx.symbol.FullyConnected(data=drop6, num_hidden=1024,
+                                       weight=rcnn_fc7_weight,
+                                       bias=rcnn_fc7_bias,
+                                       name="rcnn_fc7_stride%s" % stride
+                                       )
         relu7 = mx.symbol.Activation(data=fc7, act_type="relu", name="relu7_stride%s" % stride)
         # classification
-        cls_score = mx.symbol.FullyConnected(name='cls_score_stride%s' % stride, data=relu7, num_hidden=num_classes, weight=rcnn_fc_cls_weight, bias=rcnn_fc_cls_bias)
+        cls_score = mx.symbol.FullyConnected(data=relu7, num_hidden=num_classes,
+                                             weight=rcnn_fc_cls_weight,
+                                             bias=rcnn_fc_cls_bias,
+                                             name='rcnn_cls_score_stride%s' % stride
+                                             )
         # bounding box regression
-        bbox_pred = mx.symbol.FullyConnected(name='bbox_pred_stride%s' % stride, data=relu7, num_hidden=num_classes * 4, weight=rcnn_fc_bbox_weight, bias=rcnn_fc_bbox_bias)
+        bbox_pred = mx.symbol.FullyConnected(data=relu7, num_hidden=num_classes * 4,
+                                             weight=rcnn_fc_bbox_weight,
+                                             bias=rcnn_fc_bbox_bias,
+                                             name='rcnn_bbox_pred_stride%s' % stride
+                                             )
 
         rcnn_cls_score_list.append(cls_score)
         rcnn_bbox_pred_list.append(bbox_pred)

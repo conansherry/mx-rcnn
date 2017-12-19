@@ -282,8 +282,10 @@ def sample_rois_fpn(rois, fg_rois_per_image, rois_per_image, num_classes,
         expand_bbox_regression_targets(bbox_target_data, num_classes)
 
     # Assign to levels
-
-    rois_area = np.sqrt((rois[:, 4] - rois[:, 2]) * (rois[:, 3] - rois[:, 1]))
+    if config.TRAIN.END2END:
+        rois_area = np.sqrt((rois[:, 4] - rois[:, 2]) * (rois[:, 3] - rois[:, 1]))
+    else:
+        rois_area = np.sqrt((rois[:, 3] - rois[:, 1]) * (rois[:, 2] - rois[:, 0]))
 
     area_threshold = [[np.inf, 448],
                       [448,    224],
@@ -302,17 +304,17 @@ def sample_rois_fpn(rois, fg_rois_per_image, rois_per_image, num_classes,
         _bbox_targets = bbox_targets[index]
         _bbox_weights = bbox_weights[index]
 
-        tmp_blob = config.TRAIN.IMAGE_BLOB.copy()
-        pos_index = np.where(_labels != 0)[0]
-        for tmp_index in pos_index:
-            cv2.rectangle(tmp_blob, (_rois[tmp_index, 1], _rois[tmp_index, 2]), (_rois[tmp_index, 3], _rois[tmp_index, 4]), (0, 255, 0))
-        neg_index = np.where(_labels == 0)[0]
-        for tmp_index in neg_index:
-            cv2.rectangle(tmp_blob, (_rois[tmp_index, 1], _rois[tmp_index, 2]), (_rois[tmp_index, 3], _rois[tmp_index, 4]), (0, 0, 255))
-        for tmp_gt in gt_boxes:
-            cv2.rectangle(tmp_blob, (tmp_gt[0], tmp_gt[1]), (tmp_gt[2], tmp_gt[3]), (255, 0, 0), 2)
-        cv2.imshow('first%s' % s, tmp_blob)
-        cv2.waitKey()
+        # tmp_blob = config.TRAIN.IMAGE_BLOB.copy()
+        # pos_index = np.where(_labels != 0)[0]
+        # for tmp_index in pos_index:
+        #     cv2.rectangle(tmp_blob, (_rois[tmp_index, 1], _rois[tmp_index, 2]), (_rois[tmp_index, 3], _rois[tmp_index, 4]), (0, 255, 0))
+        # neg_index = np.where(_labels == 0)[0]
+        # for tmp_index in neg_index:
+        #     cv2.rectangle(tmp_blob, (_rois[tmp_index, 1], _rois[tmp_index, 2]), (_rois[tmp_index, 3], _rois[tmp_index, 4]), (0, 0, 255))
+        # for tmp_gt in gt_boxes:
+        #     cv2.rectangle(tmp_blob, (tmp_gt[0], tmp_gt[1]), (tmp_gt[2], tmp_gt[3]), (255, 0, 0), 2)
+        # cv2.imshow('stride%s' % s, tmp_blob)
+        # cv2.waitKey()
 
         if _rois.shape[0] != 0:
             _rois = np.pad(_rois, [(0, (rois_per_image - _rois.shape[0])), (0, 0)], mode='edge')

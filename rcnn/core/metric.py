@@ -157,7 +157,7 @@ class RCNNL1LossMetric(mx.metric.EvalMetric):
             label = labels[self.label.index('rcnn_label')].asnumpy()
 
         # calculate num_inst
-        keep_inds = np.where(label != 0)[0]
+        keep_inds = np.where(label > 0)[0]
         num_inst = len(keep_inds)
 
         self.sum_metric += np.sum(bbox_loss)

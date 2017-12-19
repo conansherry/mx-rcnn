@@ -5,12 +5,12 @@ import numpy as np
 
 from rcnn.logger import logger
 from rcnn.config import config, default, generate_config
-from rcnn.symbol.symbol_vgg_fpn import *
 from rcnn.core import callback, metric
 from rcnn.core.loader import AnchorLoader, AnchorLoaderFPN
 from rcnn.core.module import MutableModule
 from rcnn.utils.load_data import load_gt_roidb, merge_roidb, filter_roidb
 from rcnn.utils.load_model import load_param
+from rcnn.symbol import *
 
 # make a bilinear interpolation kernel, return a numpy.ndarray
 def upsample_filt(size):
@@ -32,7 +32,7 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
     config.TRAIN.BBOX_NORMALIZATION_PRECOMPUTED = True
 
     # load symbol
-    sym = eval('get_' + args.network + '_fpn_train')(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
+    sym = eval('get_' + args.network + '_train')(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
 
     # feat_sym = sym.get_internals()['rpn_cls_score_output']
     feat_sym = []
@@ -96,10 +96,14 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
                     v = arg_params[k].shape
                     filt = upsample_filt(v[3])
                     initw = np.zeros(v)
-                    initw[range(v[0]), range(v[1]), :, :] = filt  # becareful here is the slice assing
+                    initw[:, :] = filt  # becareful here is the slice assing
                     arg_params[k] = mx.nd.array(initw)
-                # if 'rpn' in k or 'rcnn' in k:
-                #     arg_params[k] = mx.nd.zeros(shape=arg_shape_dict[k])
+                # fix overflow in exp
+                if 'rpn_' in k:
+                    arg_params[k] = mx.random.normal(0, 0.0001, shape=arg_params[k].shape)
+                # fix overflow in exp
+                if 'rcnn_' in k:
+                    arg_params[k] = mx.random.normal(0, 0.0001, shape=arg_params[k].shape)
 
         for k in sym.list_auxiliary_states():
             if k not in aux_params:
@@ -146,7 +150,7 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
     epoch_end_callback = callback.do_checkpoint(prefix, means, stds)
     # decide learning rate
     base_lr = lr
-    lr_factor = 0.1
+    lr_factor = 0.66
     lr_epoch = [int(epoch) for epoch in lr_step.split(',')]
     lr_epoch_diff = [epoch - begin_epoch for epoch in lr_epoch if epoch > begin_epoch]
     lr = base_lr * (lr_factor ** (len(lr_epoch) - len(lr_epoch_diff)))
@@ -160,6 +164,7 @@ def train_net(args, ctx, pretrained, epoch, prefix, begin_epoch, end_epoch,
                         'lr_scheduler': lr_scheduler,
                         'rescale_grad': (1.0 / batch_size),
                         'clip_gradient': 5}
+    # optimizer_params = {'learning_rate': lr, 'clip_gradient': 1}
 
     # train
     mod.fit(train_data, eval_metric=eval_metrics, epoch_end_callback=epoch_end_callback,
@@ -190,7 +195,7 @@ def parse_args():
     parser.add_argument('--pretrained', help='pretrained model prefix', default=default.pretrained, type=str)
     parser.add_argument('--pretrained_epoch', help='pretrained model epoch', default=default.pretrained_epoch, type=int)
     parser.add_argument('--prefix', help='new model prefix', default=default.e2e_prefix, type=str)
-    parser.add_argument('--begin_epoch', help='begin epoch of training, use with resume', default=1, type=int)
+    parser.add_argument('--begin_epoch', help='begin epoch of training, use with resume', default=0, type=int)
     parser.add_argument('--end_epoch', help='end epoch of training', default=default.e2e_epoch, type=int)
     parser.add_argument('--lr', help='base learning rate', default=default.e2e_lr, type=float)
     parser.add_argument('--lr_step', help='learning rate steps (in epoch)', default=default.e2e_lr_step, type=str)
