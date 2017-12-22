@@ -74,27 +74,27 @@ def get_vgg_conv_down(pool_feat, num_filter=256):
     P5 = mx.symbol.Convolution(data=pool_feat[0], kernel=(1, 1), num_filter=num_filter, name="P5_lateral")
 
     # P5 2x upsampling + C4 = P4
-    P5_up = mx.sym.Deconvolution(data=P5, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
-                                 name='P5_upsampling')
-    # P5_up = mx.symbol.UpSampling(P5, scale=2, sample_type='nearest', workspace=512, name='P5_upsampling', num_args=1)
+    # P5_up = mx.sym.Deconvolution(data=P5, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
+    #                              name='P5_upsampling')
+    P5_up = mx.symbol.UpSampling(P5, scale=2, sample_type='nearest', workspace=512, name='P5_upsampling', num_args=1)
     P4_la = mx.symbol.Convolution(data=pool_feat[1], kernel=(1, 1), num_filter=num_filter, name="P4_lateral")
     P5_clip = mx.symbol.Crop(*[P5_up, P4_la], name="P4_clip")
     P4 = mx.sym.ElementWiseSum(*[P5_clip, P4_la], name="P4_sum")
     P4 = mx.symbol.Convolution(data=P4, kernel=(3, 3), pad=(1, 1), num_filter=num_filter, name="P4_aggregate")
 
     # P4 2x upsampling + C3 = P3
-    P4_up = mx.sym.Deconvolution(data=P4, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
-                                 name='P4_upsampling')
-    # P4_up = mx.symbol.UpSampling(P4, scale=2, sample_type='nearest', workspace=512, name='P4_upsampling', num_args=1)
+    # P4_up = mx.sym.Deconvolution(data=P4, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
+    #                              name='P4_upsampling')
+    P4_up = mx.symbol.UpSampling(P4, scale=2, sample_type='nearest', workspace=512, name='P4_upsampling', num_args=1)
     P3_la = mx.symbol.Convolution(data=pool_feat[2], kernel=(1, 1), num_filter=num_filter, name="P3_lateral")
     P4_clip = mx.symbol.Crop(*[P4_up, P3_la], name="P3_clip")
     P3 = mx.sym.ElementWiseSum(*[P4_clip, P3_la], name="P3_sum")
     P3 = mx.symbol.Convolution(data=P3, kernel=(3, 3), pad=(1, 1), num_filter=num_filter, name="P3_aggregate")
 
     # P3 2x upsampling + C2 = P2
-    P3_up = mx.sym.Deconvolution(data=P3, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
-                                 name='P3_upsampling')
-    # P3_up = mx.symbol.UpSampling(P3, scale=2, sample_type='nearest', workspace=512, name='P3_upsampling', num_args=1)
+    # P3_up = mx.sym.Deconvolution(data=P3, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
+    #                              name='P3_upsampling')
+    P3_up = mx.symbol.UpSampling(P3, scale=2, sample_type='nearest', workspace=512, name='P3_upsampling', num_args=1)
     P2_la = mx.symbol.Convolution(data=pool_feat[3], kernel=(1, 1), num_filter=num_filter, name="P2_lateral")
     P3_clip = mx.symbol.Crop(*[P3_up, P2_la], name="P2_clip")
     P2 = mx.sym.ElementWiseSum(*[P3_clip, P2_la], name="P2_sum")
@@ -199,8 +199,8 @@ def get_vgg_fpn_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCH
     rcnn_fc7_bias = mx.symbol.Variable('rcnn_fc7_bias')
     rcnn_fc_cls_weight = mx.symbol.Variable('rcnn_fc_cls_weight')
     rcnn_fc_cls_bias = mx.symbol.Variable('rcnn_fc_cls_bias')
-    rcnn_fc_bbox_weight = mx.symbol.Variable('rcnn_fc_bbox_weight')
-    rcnn_fc_bbox_bias = mx.symbol.Variable('rcnn_fc_bbox_bias')
+    rcnn_fc_bbox_weight = mx.symbol.Variable('bbox_pred_weight')
+    rcnn_fc_bbox_bias = mx.symbol.Variable('bbox_pred_bias')
     # end share weights
 
     rpn_cls_prob_dict = dict()
@@ -312,8 +312,8 @@ def get_vgg_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANC
     rcnn_fc7_bias = mx.symbol.Variable('rcnn_fc7_bias')
     rcnn_fc_cls_weight = mx.symbol.Variable('rcnn_fc_cls_weight')
     rcnn_fc_cls_bias = mx.symbol.Variable('rcnn_fc_cls_bias')
-    rcnn_fc_bbox_weight = mx.symbol.Variable('rcnn_fc_bbox_weight')
-    rcnn_fc_bbox_bias = mx.symbol.Variable('rcnn_fc_bbox_bias')
+    rcnn_fc_bbox_weight = mx.symbol.Variable('bbox_pred_weight')
+    rcnn_fc_bbox_bias = mx.symbol.Variable('bbox_pred_bias')
     # end share weights
 
     pool_feat = get_vgg_conv(data)
@@ -344,6 +344,9 @@ def get_vgg_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANC
                                               weight=rpn_conv_bbox_weight,
                                               bias=rpn_conv_bbox_bias,
                                               name='rpn_bbox_pred_stride%s' % stride)
+
+        # fix overflow
+        rpn_bbox_pred = mx.symbol.clip(data=rpn_bbox_pred, a_min=-1, a_max=1)
 
         # prepare rpn data
         rpn_cls_score_reshape_for_loss = mx.symbol.Reshape(data=rpn_cls_score,
@@ -450,6 +453,9 @@ def get_vgg_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANC
         cls_score = mx.symbol.FullyConnected(name='cls_score_stride%s' % stride, data=drop7, num_hidden=num_classes, weight=rcnn_fc_cls_weight, bias=rcnn_fc_cls_bias)
         # bounding box regression
         bbox_pred = mx.symbol.FullyConnected(name='bbox_pred_stride%s' % stride, data=drop7, num_hidden=num_classes * 4, weight=rcnn_fc_bbox_weight, bias=rcnn_fc_bbox_bias)
+
+        # fix overflow
+        bbox_pred = mx.symbol.clip(data=bbox_pred, a_min=-5, a_max=5)
 
         rcnn_cls_score_list.append(cls_score)
         rcnn_bbox_pred_list.append(bbox_pred)

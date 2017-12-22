@@ -32,10 +32,12 @@ def train_rpn(network, dataset, image_set, root_path, dataset_path,
 
     # load symbol
     sym = eval('get_' + network + '_rpn')(num_anchors=config.NUM_ANCHORS)
-    # feat_sym = sym.get_internals()['rpn_cls_score_output']
-    feat_sym = []
-    for stride in config.RPN_FEAT_STRIDE:
-        feat_sym.append(sym.get_internals()['rpn_cls_score_stride%s_output' % stride])
+    if 'fpn' not in network:
+        feat_sym = sym.get_internals()['rpn_cls_score_output']
+    else:
+        feat_sym = []
+        for stride in config.RPN_FEAT_STRIDE:
+            feat_sym.append(sym.get_internals()['rpn_cls_score_stride%s_output' % stride])
 
     # setup multi-gpu
     batch_size = len(ctx)
@@ -53,14 +55,16 @@ def train_rpn(network, dataset, image_set, root_path, dataset_path,
     roidb = filter_roidb(roidb)
 
     # load training data
-    # train_data = AnchorLoader(feat_sym, roidb, batch_size=input_batch_size, shuffle=not no_shuffle,
-    #                           ctx=ctx, work_load_list=work_load_list,
-    #                           feat_stride=config.RPN_FEAT_STRIDE, anchor_scales=config.ANCHOR_SCALES,
-    #                           anchor_ratios=config.ANCHOR_RATIOS, aspect_grouping=config.TRAIN.ASPECT_GROUPING)
-    train_data = AnchorLoaderFPN(feat_sym, roidb, batch_size=input_batch_size, shuffle=not no_shuffle,
-                                 ctx=ctx, work_load_list=work_load_list,
-                                 feat_stride=config.RPN_FEAT_STRIDE, anchor_scales=config.ANCHOR_SCALES,
-                                 anchor_ratios=config.ANCHOR_RATIOS, aspect_grouping=config.TRAIN.ASPECT_GROUPING)
+    if 'fpn' not in network:
+        train_data = AnchorLoader(feat_sym, roidb, batch_size=input_batch_size, shuffle=not no_shuffle,
+                                  ctx=ctx, work_load_list=work_load_list,
+                                  feat_stride=config.RPN_FEAT_STRIDE, anchor_scales=config.ANCHOR_SCALES,
+                                  anchor_ratios=config.ANCHOR_RATIOS, aspect_grouping=config.TRAIN.ASPECT_GROUPING)
+    else:
+        train_data = AnchorLoaderFPN(feat_sym, roidb, batch_size=input_batch_size, shuffle=not no_shuffle,
+                                     ctx=ctx, work_load_list=work_load_list,
+                                     feat_stride=config.RPN_FEAT_STRIDE, anchor_scales=config.ANCHOR_SCALES,
+                                     anchor_ratios=config.ANCHOR_RATIOS, aspect_grouping=config.TRAIN.ASPECT_GROUPING)
 
     # infer max shape
     max_data_shape = [('data', (input_batch_size, 3, max([v[0] for v in config.SCALES]), max([v[1] for v in config.SCALES])))]
@@ -94,12 +98,12 @@ def train_rpn(network, dataset, image_set, root_path, dataset_path,
                     initw = np.zeros(v)
                     initw[:, :] = filt  # becareful here is the slice assing
                     arg_params[k] = mx.nd.array(initw)
-                    # fix overflow in exp
-                    if 'rpn_' in k:
-                        arg_params[k] = mx.random.normal(0, 0.0001, shape=arg_params[k].shape)
-                    # fix overflow in exp
-                    if 'rcnn_' in k:
-                        arg_params[k] = mx.random.normal(0, 0.0001, shape=arg_params[k].shape)
+                # # fix overflow in exp
+                # if 'rpn_' in k:
+                #     arg_params[k] = mx.random.normal(0, 0.0001, shape=arg_params[k].shape)
+                # # fix overflow in exp
+                # if 'rcnn_' in k:
+                #     arg_params[k] = mx.random.normal(0, 0.0001, shape=arg_params[k].shape)
 
     # check parameter shapes
     for k in sym.list_arguments():

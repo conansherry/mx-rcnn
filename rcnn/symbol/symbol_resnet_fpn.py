@@ -6,31 +6,58 @@ from rcnn.symbol import fpn_roi_pooling, proposal_fpn
 eps = 2e-5
 use_global_stats = True
 workspace = 512
-res_deps = {'50': (3, 4, 6, 3), '101': (3, 4, 23, 3), '152': (3, 8, 36, 3), '200': (3, 24, 36, 3)}
-units = res_deps['50']
-filter_list = [256, 512, 1024, 2048]
+res_deps = {'18': (2, 2, 2, 2), '34': (3, 4, 6, 3), '50': (3, 4, 6, 3), '101': (3, 4, 23, 3), '152': (3, 8, 36, 3), '200': (3, 24, 36, 3)}
+res_type = '34'
+units = res_deps[res_type]
+if res_type != '34' and res_type != '18':
+    filter_list = [256, 512, 1024, 2048]
+else:
+    filter_list = [64, 128, 256, 512]
 
 def residual_unit(data, num_filter, stride, dim_match, name):
-    bn1   = mx.sym.BatchNorm(data=data, fix_gamma=False, eps=eps, use_global_stats=use_global_stats, name=name + '_bn1')
-    act1  = mx.sym.Activation(data=bn1, act_type='relu', name=name + '_relu1')
-    conv1 = mx.sym.Convolution(data=act1, num_filter=int(num_filter * 0.25), kernel=(1, 1), stride=(1, 1), pad=(0, 0),
-                               no_bias=True, workspace=workspace, name=name + '_conv1')
-    bn2   = mx.sym.BatchNorm(data=conv1, fix_gamma=False, eps=eps, use_global_stats=use_global_stats, name=name + '_bn2')
-    act2  = mx.sym.Activation(data=bn2, act_type='relu', name=name + '_relu2')
-    conv2 = mx.sym.Convolution(data=act2, num_filter=int(num_filter * 0.25), kernel=(3, 3), stride=stride, pad=(1, 1),
-                               no_bias=True, workspace=workspace, name=name + '_conv2')
-    bn3   = mx.sym.BatchNorm(data=conv2, fix_gamma=False, eps=eps, use_global_stats=use_global_stats, name=name + '_bn3')
-    act3  = mx.sym.Activation(data=bn3, act_type='relu', name=name + '_relu3')
-    conv3 = mx.sym.Convolution(data=act3, num_filter=num_filter, kernel=(1, 1), stride=(1, 1), pad=(0, 0), no_bias=True,
-                               workspace=workspace, name=name + '_conv3')
-    if dim_match:
-        shortcut = data
+    if res_type == '34' or res_type == '18':
+        bn1 = mx.sym.BatchNorm(data=data, fix_gamma=False, eps=eps, use_global_stats=use_global_stats,
+                               name=name + '_bn1')
+        act1 = mx.sym.Activation(data=bn1, act_type='relu', name=name + '_relu1')
+        conv1 = mx.sym.Convolution(data=act1, num_filter=int(num_filter), kernel=(3, 3), stride=stride, pad=(1, 1),
+                                   no_bias=True, workspace=workspace, name=name + '_conv1')
+        bn2 = mx.sym.BatchNorm(data=conv1, fix_gamma=False, eps=eps, use_global_stats=use_global_stats,
+                               name=name + '_bn2')
+        act2 = mx.sym.Activation(data=bn2, act_type='relu', name=name + '_relu2')
+        conv2 = mx.sym.Convolution(data=act2, num_filter=int(num_filter), kernel=(3, 3), stride=(1, 1), pad=(1, 1),
+                                   no_bias=True, workspace=workspace, name=name + '_conv2')
+        if dim_match:
+            shortcut = data
+        else:
+            shortcut = mx.sym.Convolution(data=act1, num_filter=num_filter, kernel=(1, 1), stride=stride, no_bias=True,
+                                          workspace=workspace, name=name + '_sc')
+        sum = mx.sym.ElementWiseSum(*[conv2, shortcut], name=name + '_plus')
     else:
-        shortcut = mx.sym.Convolution(data=act1, num_filter=num_filter, kernel=(1, 1), stride=stride, no_bias=True,
-                                      workspace=workspace, name=name + '_sc')
-    sum = mx.sym.ElementWiseSum(*[conv3, shortcut], name=name + '_plus')
+        bn1 = mx.sym.BatchNorm(data=data, fix_gamma=False, eps=eps, use_global_stats=use_global_stats,
+                               name=name + '_bn1')
+        act1 = mx.sym.Activation(data=bn1, act_type='relu', name=name + '_relu1')
+        conv1 = mx.sym.Convolution(data=act1, num_filter=int(num_filter * 0.25), kernel=(1, 1), stride=(1, 1),
+                                   pad=(0, 0),
+                                   no_bias=True, workspace=workspace, name=name + '_conv1')
+        bn2 = mx.sym.BatchNorm(data=conv1, fix_gamma=False, eps=eps, use_global_stats=use_global_stats,
+                               name=name + '_bn2')
+        act2 = mx.sym.Activation(data=bn2, act_type='relu', name=name + '_relu2')
+        conv2 = mx.sym.Convolution(data=act2, num_filter=int(num_filter * 0.25), kernel=(3, 3), stride=stride,
+                                   pad=(1, 1),
+                                   no_bias=True, workspace=workspace, name=name + '_conv2')
+        bn3 = mx.sym.BatchNorm(data=conv2, fix_gamma=False, eps=eps, use_global_stats=use_global_stats,
+                               name=name + '_bn3')
+        act3 = mx.sym.Activation(data=bn3, act_type='relu', name=name + '_relu3')
+        conv3 = mx.sym.Convolution(data=act3, num_filter=num_filter, kernel=(1, 1), stride=(1, 1), pad=(0, 0),
+                                   no_bias=True,
+                                   workspace=workspace, name=name + '_conv3')
+        if dim_match:
+            shortcut = data
+        else:
+            shortcut = mx.sym.Convolution(data=act1, num_filter=num_filter, kernel=(1, 1), stride=stride, no_bias=True,
+                                          workspace=workspace, name=name + '_sc')
+        sum = mx.sym.ElementWiseSum(*[conv3, shortcut], name=name + '_plus')
     return sum
-
 
 def get_resnet_conv(data):
     # res1
@@ -77,27 +104,27 @@ def get_resnet_conv_down(conv_feat, num_filter=256):
     P5 = mx.symbol.Convolution(data=conv_feat[0], kernel=(1, 1), num_filter=num_filter, name="P5_lateral")
 
     # P5 2x upsampling + C4 = P4
-    P5_up = mx.sym.Deconvolution(data=P5, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
-                                 name='P5_upsampling')
-    # P5_up = mx.symbol.UpSampling(P5, scale=2, sample_type='nearest', workspace=512, name='P5_upsampling', num_args=1)
+    # P5_up = mx.sym.Deconvolution(data=P5, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
+    #                              name='P5_upsampling')
+    P5_up = mx.symbol.UpSampling(P5, scale=2, sample_type='nearest', workspace=512, name='P5_upsampling', num_args=1)
     P4_la = mx.symbol.Convolution(data=conv_feat[1], kernel=(1, 1), num_filter=num_filter, name="P4_lateral")
     P5_clip = mx.symbol.Crop(*[P5_up, P4_la], name="P4_clip")
     P4 = mx.sym.ElementWiseSum(*[P5_clip, P4_la], name="P4_sum")
     P4 = mx.symbol.Convolution(data=P4, kernel=(3, 3), pad=(1, 1), num_filter=num_filter, name="P4_aggregate")
 
     # P4 2x upsampling + C3 = P3
-    P4_up = mx.sym.Deconvolution(data=P4, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
-                                 name='P4_upsampling')
-    # P4_up = mx.symbol.UpSampling(P4, scale=2, sample_type='nearest', workspace=512, name='P4_upsampling', num_args=1)
+    # P4_up = mx.sym.Deconvolution(data=P4, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
+    #                              name='P4_upsampling')
+    P4_up = mx.symbol.UpSampling(P4, scale=2, sample_type='nearest', workspace=512, name='P4_upsampling', num_args=1)
     P3_la = mx.symbol.Convolution(data=conv_feat[2], kernel=(1, 1), num_filter=num_filter, name="P3_lateral")
     P4_clip = mx.symbol.Crop(*[P4_up, P3_la], name="P3_clip")
     P3 = mx.sym.ElementWiseSum(*[P4_clip, P3_la], name="P3_sum")
     P3 = mx.symbol.Convolution(data=P3, kernel=(3, 3), pad=(1, 1), num_filter=num_filter, name="P3_aggregate")
 
     # P3 2x upsampling + C2 = P2
-    P3_up = mx.sym.Deconvolution(data=P3, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
-                                 name='P3_upsampling')
-    # P3_up = mx.symbol.UpSampling(P3, scale=2, sample_type='nearest', workspace=512, name='P3_upsampling', num_args=1)
+    # P3_up = mx.sym.Deconvolution(data=P3, kernel=(4, 4), stride=(2, 2), pad=(1, 1), num_filter=num_filter, adj=(1, 1),
+    #                              name='P3_upsampling')
+    P3_up = mx.symbol.UpSampling(P3, scale=2, sample_type='nearest', workspace=512, name='P3_upsampling', num_args=1)
     P2_la = mx.symbol.Convolution(data=conv_feat[3], kernel=(1, 1), num_filter=num_filter, name="P2_lateral")
     P3_clip = mx.symbol.Crop(*[P3_up, P2_la], name="P2_clip")
     P2 = mx.sym.ElementWiseSum(*[P3_clip, P2_la], name="P2_sum")
@@ -150,6 +177,8 @@ def get_resnet_fpn_rpn(num_anchors=config.NUM_ANCHORS):
                                               weight=rpn_conv_bbox_weight,
                                               bias=rpn_conv_bbox_bias,
                                               name='rpn_bbox_pred_stride%s' % stride)
+
+        rpn_bbox_pred = mx.symbol.clip(data=rpn_bbox_pred, a_min=-10, a_max=10)
 
         # prepare rpn data
         rpn_cls_score_reshape_for_loss = mx.symbol.Reshape(data=rpn_cls_score,
@@ -205,8 +234,8 @@ def get_resnet_fpn_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_A
     rcnn_fc7_bias   = mx.symbol.Variable('rcnn_fc7_bias')
     rcnn_fc_cls_weight  = mx.symbol.Variable('rcnn_fc_cls_weight')
     rcnn_fc_cls_bias    = mx.symbol.Variable('rcnn_fc_cls_bias')
-    rcnn_fc_bbox_weight = mx.symbol.Variable('rcnn_fc_bbox_weight')
-    rcnn_fc_bbox_bias   = mx.symbol.Variable('rcnn_fc_bbox_bias')
+    rcnn_fc_bbox_weight = mx.symbol.Variable('bbox_pred_weight')
+    rcnn_fc_bbox_bias = mx.symbol.Variable('bbox_pred_bias')
 
     rpn_cls_prob_dict = {}
     rpn_bbox_pred_dict = {}
@@ -243,8 +272,8 @@ def get_resnet_fpn_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_A
                                                  shape=(0, 2 * num_anchors, -1, 0),
                                                  name='rpn_cls_prob_reshape')
 
-        rpn_cls_prob_dict.update({'cls_prob_stride%s'%stride:rpn_cls_prob_reshape})
-        rpn_bbox_pred_dict.update({'bbox_pred_stride%s'%stride:rpn_bbox_pred})
+        rpn_cls_prob_dict.update({'rpn_cls_prob_stride%s'%stride:rpn_cls_prob_reshape})
+        rpn_bbox_pred_dict.update({'rpn_bbox_pred_stride%s'%stride:rpn_bbox_pred})
 
     args_dict = dict(rpn_cls_prob_dict.items()+rpn_bbox_pred_dict.items())
     aux_dict = {'im_info':im_info,'name':'rois',
@@ -314,8 +343,8 @@ def get_resnet_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_
     rcnn_fc7_bias = mx.symbol.Variable('rcnn_fc7_bias')
     rcnn_fc_cls_weight = mx.symbol.Variable('rcnn_fc_cls_weight')
     rcnn_fc_cls_bias = mx.symbol.Variable('rcnn_fc_cls_bias')
-    rcnn_fc_bbox_weight = mx.symbol.Variable('rcnn_fc_bbox_weight')
-    rcnn_fc_bbox_bias = mx.symbol.Variable('rcnn_fc_bbox_bias')
+    rcnn_fc_bbox_weight = mx.symbol.Variable('bbox_pred_weight')
+    rcnn_fc_bbox_bias = mx.symbol.Variable('bbox_pred_bias')
     # end share weights
 
     # shared convolutional layers, bottom up
@@ -348,6 +377,9 @@ def get_resnet_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_
                                               weight=rpn_conv_bbox_weight,
                                               bias=rpn_conv_bbox_bias,
                                               name='rpn_bbox_pred_stride%s' % stride)
+
+        # fix overflow
+        rpn_bbox_pred = mx.symbol.clip(data=rpn_bbox_pred, a_min=-1, a_max=1)
 
         # prepare rpn data
         rpn_cls_score_reshape_for_loss = mx.symbol.Reshape(data=rpn_cls_score,
@@ -469,6 +501,9 @@ def get_resnet_fpn_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_
                                              bias=rcnn_fc_bbox_bias,
                                              name='rcnn_bbox_pred_stride%s' % stride
                                              )
+
+        # fix overflow
+        bbox_pred = mx.symbol.clip(data=bbox_pred, a_min=-5, a_max=5)
 
         rcnn_cls_score_list.append(cls_score)
         rcnn_bbox_pred_list.append(bbox_pred)

@@ -13,10 +13,11 @@ config.FIXED_PARAMS_SHARED = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5']
 
 # dataset related params
 config.NUM_CLASSES = 21
-config.SCALES = [(600, 1000)]  # first is scale (the shorter side); second is max size
+config.SCALES = [(512, 1024)]  # first is scale (the shorter side); second is max size
 config.ANCHOR_SCALES = (8, 16, 32)
 config.ANCHOR_RATIOS = (0.5, 1, 2)
 config.NUM_ANCHORS = len(config.ANCHOR_SCALES) * len(config.ANCHOR_RATIOS)
+config.CLASS_ID = [0, 24, 25, 26, 27, 28, 31, 32, 33]
 
 config.TRAIN = edict()
 
@@ -61,9 +62,10 @@ config.TRAIN.RPN_NMS_THRESH = 0.7
 config.TRAIN.RPN_PRE_NMS_TOP_N = 12000
 config.TRAIN.RPN_POST_NMS_TOP_N = 2000
 # approximate bounding box regression
-config.TRAIN.BBOX_NORMALIZATION_PRECOMPUTED = False
+config.TRAIN.BBOX_NORMALIZATION_PRECOMPUTED = True
 config.TRAIN.BBOX_MEANS = (0.0, 0.0, 0.0, 0.0)
 config.TRAIN.BBOX_STDS = (0.1, 0.1, 0.2, 0.2)
+# config.TRAIN.BBOX_STDS = (1, 1, 1, 1)
 
 config.TEST = edict()
 
@@ -94,7 +96,7 @@ default = edict()
 default.network = 'vgg'
 default.pretrained = 'model/vgg16'
 default.pretrained_epoch = 0
-default.base_lr = 0.00001
+default.base_lr = 0.0004
 # default dataset
 default.dataset = 'PascalVOC'
 default.image_set = '2007_trainval'
@@ -102,13 +104,13 @@ default.test_image_set = '2007_test'
 default.root_path = 'data'
 default.dataset_path = 'data/VOCdevkit'
 # default training
-default.frequent = 20
+default.frequent = 1
 default.kvstore = 'device'
 # default e2e
 default.e2e_prefix = 'model/e2e'
-default.e2e_epoch = 20
+default.e2e_epoch = 10
 default.e2e_lr = default.base_lr
-default.e2e_lr_step = '5'
+default.e2e_lr_step = '7'
 # default rpn
 default.rpn_prefix = 'model/rpn'
 default.rpn_epoch = 8
@@ -126,10 +128,15 @@ network = edict()
 network.vgg = edict()
 
 network.vgg_fpn = edict()
+network.vgg_fpn.pretrained = 'model/vgg16'
+network.vgg_fpn.pretrained_epoch = 0
+network.vgg_fpn.ANCHOR_SCALES = (8,)
+network.vgg_fpn.ANCHOR_RATIOS = (0.5, 1, 2)
+network.vgg_fpn.NUM_ANCHORS = len(network.vgg_fpn.ANCHOR_SCALES) * len(network.vgg_fpn.ANCHOR_RATIOS)
 network.vgg_fpn.RPN_FEAT_STRIDE = [32, 16, 8, 4]
 network.vgg_fpn.RCNN_FEAT_STRIDE = [32, 16, 8, 4]
-network.vgg_fpn.FIXED_PARAMS = ['conv1', 'conv2', 'upsampling']
-network.vgg_fpn.FIXED_PARAMS_SHARED = ['conv1', 'conv2', 'upsampling']
+network.vgg_fpn.FIXED_PARAMS = ['conv1', 'conv2']
+network.vgg_fpn.FIXED_PARAMS_SHARED = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5']
 
 network.resnet = edict()
 network.resnet.pretrained = 'model/resnet-101'
@@ -142,13 +149,16 @@ network.resnet.FIXED_PARAMS = ['conv0', 'stage1', 'gamma', 'beta']
 network.resnet.FIXED_PARAMS_SHARED = ['conv0', 'stage1', 'stage2', 'stage3', 'gamma', 'beta']
 
 network.resnet_fpn = edict()
-network.resnet_fpn.pretrained = 'model/resnet-50'
+network.resnet_fpn.pretrained = 'model/resnet-34'
 network.resnet_fpn.pretrained_epoch = 0
 network.resnet_fpn.PIXEL_MEANS = np.array([0, 0, 0])
 network.resnet_fpn.IMAGE_STRIDE = 0
+network.resnet_fpn.ANCHOR_SCALES = (8, 16, )
+network.resnet_fpn.ANCHOR_RATIOS = (0.5, 1, 2)
+network.resnet_fpn.NUM_ANCHORS = len(network.resnet_fpn.ANCHOR_SCALES) * len(network.resnet_fpn.ANCHOR_RATIOS)
 network.resnet_fpn.RPN_FEAT_STRIDE = [32, 16, 8, 4]
 network.resnet_fpn.RCNN_FEAT_STRIDE = [32, 16, 8, 4]
-network.resnet_fpn.FIXED_PARAMS = ['conv0', 'stage1', 'gamma', 'beta', 'upsampling']
+network.resnet_fpn.FIXED_PARAMS = ['conv0', 'stage1', 'gamma', 'beta']
 network.resnet_fpn.FIXED_PARAMS_SHARED = ['conv0', 'stage1', 'stage2', 'stage3', 'gamma', 'beta']
 
 # dataset settings
@@ -164,6 +174,17 @@ dataset.coco.root_path = 'data'
 dataset.coco.dataset_path = 'data/coco'
 dataset.coco.NUM_CLASSES = 81
 
+dataset.Cityscape = edict()
+dataset.Cityscape.image_set = 'train'
+dataset.Cityscape.test_image_set = 'val'
+dataset.Cityscape.root_path = 'data'
+dataset.Cityscape.dataset_path = 'data/cityscape'
+dataset.Cityscape.NUM_CLASSES = 9
+dataset.Cityscape.SCALES = [(1024, 2048)]
+dataset.Cityscape.ANCHOR_SCALES = (8,)
+dataset.Cityscape.ANCHOR_RATIOS = (0.5, 1, 2)
+dataset.Cityscape.NUM_ANCHORS = len(dataset.Cityscape.ANCHOR_SCALES) * len(dataset.Cityscape.ANCHOR_RATIOS)
+dataset.Cityscape.CLASS_ID = [0, 24, 25, 26, 27, 28, 31, 32, 33]
 
 def generate_config(_network, _dataset):
     for k, v in network[_network].items():
@@ -171,9 +192,10 @@ def generate_config(_network, _dataset):
             config[k] = v
         elif k in default:
             default[k] = v
-    for k, v in dataset[_dataset].items():
-        if k in config:
-            config[k] = v
-        elif k in default:
-            default[k] = v
+    if _dataset is not None:
+        for k, v in dataset[_dataset].items():
+            if k in config:
+                config[k] = v
+            elif k in default:
+                default[k] = v
 

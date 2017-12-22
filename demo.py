@@ -1,12 +1,13 @@
 import argparse
 import os
+os.environ['MXNET_CUDNN_AUTOTUNE_DEFAULT'] = '0'
 import cv2
+import math
 import mxnet as mx
 import numpy as np
 from rcnn.logger import logger
-from rcnn.config import config
-from rcnn.symbol import get_vgg_test, get_vgg_rpn_test
-from rcnn.symbol.symbol_vgg_fpn import get_vgg_fpn_test
+from rcnn.config import config, default, generate_config
+from rcnn.symbol import *
 from rcnn.io.image import resize, transform
 from rcnn.core.tester import Predictor, im_detect, im_proposal, vis_all_detection, draw_all_detection
 from rcnn.utils.load_model import load_param
@@ -22,7 +23,6 @@ CLASSES = ('__background__',
 config.TEST.HAS_RPN = True
 SHORT_SIDE = config.SCALES[0][0]
 LONG_SIDE = config.SCALES[0][1]
-PIXEL_MEANS = config.PIXEL_MEANS
 DATA_NAMES = ['data', 'im_info']
 LABEL_NAMES = None
 DATA_SHAPES = [('data', (1, 3, LONG_SIDE, SHORT_SIDE)), ('im_info', (1, 3))]
@@ -31,7 +31,6 @@ LABEL_SHAPES = None
 CONF_THRESH = 0.7
 NMS_THRESH = 0.3
 nms = py_nms_wrapper(NMS_THRESH)
-
 
 def get_net(symbol, prefix, epoch, ctx):
     arg_params, aux_params = load_param(prefix, epoch, convert=True, ctx=ctx, process=True)
@@ -71,8 +70,20 @@ def generate_batch(im):
     im_scale: float number
     """
     im_array, im_scale = resize(im, SHORT_SIDE, LONG_SIDE)
-    im_array = transform(im_array, PIXEL_MEANS)
-    im_info = np.array([[im_array.shape[2], im_array.shape[3], im_scale]], dtype=np.float32)
+
+    im_info = np.array([[im_array.shape[0], im_array.shape[1], im_scale]], dtype=np.float32)
+
+    if im_array.shape[0] == SHORT_SIDE or im_array.shape[0] == LONG_SIDE:
+        if im_array.shape[1] % 32 != 0:
+            pad_size = int(math.ceil(im_array.shape[1] / 32.) * 32 - im_array.shape[1])
+            im_array = cv2.copyMakeBorder(im_array, 0, 0, 0, pad_size, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    elif im_array.shape[1] == SHORT_SIDE or im_array.shape[1] == LONG_SIDE:
+        if im_array.shape[0] % 32 != 0:
+            pad_size = int(math.ceil(im_array.shape[0] / 32.) * 32 - im_array.shape[0])
+            im_array = cv2.copyMakeBorder(im_array, 0, pad_size, 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+
+    im_array = transform(im_array, config.PIXEL_MEANS)
+    # im_info = np.array([[im_array.shape[2], im_array.shape[3], im_scale]], dtype=np.float32)
     data = [mx.nd.array(im_array), mx.nd.array(im_info)]
     data_shapes = [('data', im_array.shape), ('im_info', im_info.shape)]
     data_batch = mx.io.DataBatch(data=data, label=None, provide_data=data_shapes, provide_label=None)
@@ -123,10 +134,13 @@ def demo_net(predictor, image_name, vis=False):
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Demonstrate a Faster R-CNN network')
+    parser.add_argument('--network', help='network name', default=default.network, type=str)
+    args, rest = parser.parse_known_args()
+    generate_config(args.network, None)
     parser.add_argument('--image', help='custom image', type=str)
     parser.add_argument('--prefix', help='saved model prefix', type=str)
     parser.add_argument('--epoch', help='epoch of pretrained model', type=int)
-    parser.add_argument('--gpu', help='GPU device to use', default=0, type=int)
+    parser.add_argument('--gpu', help='GPU device to use', default=1, type=int)
     parser.add_argument('--vis', help='display result', action='store_true')
     args = parser.parse_args()
     return args
@@ -135,7 +149,7 @@ def parse_args():
 def main():
     args = parse_args()
     ctx = mx.gpu(args.gpu)
-    symbol = get_vgg_fpn_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
+    symbol = eval('get_' + args.network + '_test')(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHORS)
     predictor = get_net(symbol, args.prefix, args.epoch, ctx)
     demo_net(predictor, args.image, args.vis)
 

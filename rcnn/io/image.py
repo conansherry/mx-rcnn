@@ -3,7 +3,7 @@ import cv2
 import os
 import random
 from ..config import config
-
+import math
 
 def get_image(roidb):
     """
@@ -30,11 +30,22 @@ def get_image(roidb):
         max_size = config.SCALES[scale_ind][1]
         im, im_scale = resize(im, target_size, max_size, stride=config.IMAGE_STRIDE)
 
+        im_info = [im.shape[0], im.shape[1], im_scale]
+
+        if im.shape[0] == target_size or im.shape[0] == max_size:
+            if im.shape[1] % 32 != 0:
+                pad_size = int(math.ceil(im.shape[1] / 32.) * 32 - im.shape[1])
+                im = cv2.copyMakeBorder(im, 0, 0, 0, pad_size, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+        elif im.shape[1] == target_size or im.shape[1] == max_size:
+            if im.shape[0] % 32 != 0:
+                pad_size = int(math.ceil(im.shape[0] / 32.) * 32 - im.shape[0])
+                im = cv2.copyMakeBorder(im, 0, pad_size, 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+
         config.TRAIN.IMAGE_BLOB = im.copy()
 
         im_tensor = transform(im, config.PIXEL_MEANS)
         processed_ims.append(im_tensor)
-        im_info = [im_tensor.shape[2], im_tensor.shape[3], im_scale]
+        # im_info = [im_tensor.shape[2], im_tensor.shape[3], im_scale]
         new_rec['boxes'] = roi_rec['boxes'].copy() * im_scale
         new_rec['im_info'] = im_info
         processed_roidb.append(new_rec)
