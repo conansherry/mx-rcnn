@@ -6,30 +6,57 @@ from rcnn.config import config
 eps = 2e-5
 use_global_stats = True
 workspace = 512
-res_deps = {'50': (3, 4, 6, 3), '101': (3, 4, 23, 3), '152': (3, 8, 36, 3), '200': (3, 24, 36, 3)}
-units = res_deps['101']
-filter_list = [256, 512, 1024, 2048]
-
+res_deps = {'18': (2, 2, 2, 2), '34': (3, 4, 6, 3), '50': (3, 4, 6, 3), '101': (3, 4, 23, 3), '152': (3, 8, 36, 3), '200': (3, 24, 36, 3)}
+res_type = '34'
+units = res_deps[res_type]
+if res_type != '34' and res_type != '18':
+    filter_list = [256, 512, 1024, 2048]
+else:
+    filter_list = [64, 128, 256, 512]
 
 def residual_unit(data, num_filter, stride, dim_match, name):
-    bn1 = mx.sym.BatchNorm(data=data, fix_gamma=False, eps=eps, use_global_stats=use_global_stats, name=name + '_bn1')
-    act1 = mx.sym.Activation(data=bn1, act_type='relu', name=name + '_relu1')
-    conv1 = mx.sym.Convolution(data=act1, num_filter=int(num_filter * 0.25), kernel=(1, 1), stride=(1, 1), pad=(0, 0),
-                               no_bias=True, workspace=workspace, name=name + '_conv1')
-    bn2 = mx.sym.BatchNorm(data=conv1, fix_gamma=False, eps=eps, use_global_stats=use_global_stats, name=name + '_bn2')
-    act2 = mx.sym.Activation(data=bn2, act_type='relu', name=name + '_relu2')
-    conv2 = mx.sym.Convolution(data=act2, num_filter=int(num_filter * 0.25), kernel=(3, 3), stride=stride, pad=(1, 1),
-                               no_bias=True, workspace=workspace, name=name + '_conv2')
-    bn3 = mx.sym.BatchNorm(data=conv2, fix_gamma=False, eps=eps, use_global_stats=use_global_stats, name=name + '_bn3')
-    act3 = mx.sym.Activation(data=bn3, act_type='relu', name=name + '_relu3')
-    conv3 = mx.sym.Convolution(data=act3, num_filter=num_filter, kernel=(1, 1), stride=(1, 1), pad=(0, 0), no_bias=True,
-                               workspace=workspace, name=name + '_conv3')
-    if dim_match:
-        shortcut = data
+    if res_type == '34' or res_type == '18':
+        bn1 = mx.sym.BatchNorm(data=data, fix_gamma=False, eps=eps, use_global_stats=use_global_stats,
+                               name=name + '_bn1')
+        act1 = mx.sym.Activation(data=bn1, act_type='relu', name=name + '_relu1')
+        conv1 = mx.sym.Convolution(data=act1, num_filter=int(num_filter), kernel=(3, 3), stride=stride, pad=(1, 1),
+                                   no_bias=True, workspace=workspace, name=name + '_conv1')
+        bn2 = mx.sym.BatchNorm(data=conv1, fix_gamma=False, eps=eps, use_global_stats=use_global_stats,
+                               name=name + '_bn2')
+        act2 = mx.sym.Activation(data=bn2, act_type='relu', name=name + '_relu2')
+        conv2 = mx.sym.Convolution(data=act2, num_filter=int(num_filter), kernel=(3, 3), stride=(1, 1), pad=(1, 1),
+                                   no_bias=True, workspace=workspace, name=name + '_conv2')
+        if dim_match:
+            shortcut = data
+        else:
+            shortcut = mx.sym.Convolution(data=act1, num_filter=num_filter, kernel=(1, 1), stride=stride, no_bias=True,
+                                          workspace=workspace, name=name + '_sc')
+        sum = mx.sym.ElementWiseSum(*[conv2, shortcut], name=name + '_plus')
     else:
-        shortcut = mx.sym.Convolution(data=act1, num_filter=num_filter, kernel=(1, 1), stride=stride, no_bias=True,
-                                      workspace=workspace, name=name + '_sc')
-    sum = mx.sym.ElementWiseSum(*[conv3, shortcut], name=name + '_plus')
+        bn1 = mx.sym.BatchNorm(data=data, fix_gamma=False, eps=eps, use_global_stats=use_global_stats,
+                               name=name + '_bn1')
+        act1 = mx.sym.Activation(data=bn1, act_type='relu', name=name + '_relu1')
+        conv1 = mx.sym.Convolution(data=act1, num_filter=int(num_filter * 0.25), kernel=(1, 1), stride=(1, 1),
+                                   pad=(0, 0),
+                                   no_bias=True, workspace=workspace, name=name + '_conv1')
+        bn2 = mx.sym.BatchNorm(data=conv1, fix_gamma=False, eps=eps, use_global_stats=use_global_stats,
+                               name=name + '_bn2')
+        act2 = mx.sym.Activation(data=bn2, act_type='relu', name=name + '_relu2')
+        conv2 = mx.sym.Convolution(data=act2, num_filter=int(num_filter * 0.25), kernel=(3, 3), stride=stride,
+                                   pad=(1, 1),
+                                   no_bias=True, workspace=workspace, name=name + '_conv2')
+        bn3 = mx.sym.BatchNorm(data=conv2, fix_gamma=False, eps=eps, use_global_stats=use_global_stats,
+                               name=name + '_bn3')
+        act3 = mx.sym.Activation(data=bn3, act_type='relu', name=name + '_relu3')
+        conv3 = mx.sym.Convolution(data=act3, num_filter=num_filter, kernel=(1, 1), stride=(1, 1), pad=(0, 0),
+                                   no_bias=True,
+                                   workspace=workspace, name=name + '_conv3')
+        if dim_match:
+            shortcut = data
+        else:
+            shortcut = mx.sym.Convolution(data=act1, num_filter=num_filter, kernel=(1, 1), stride=stride, no_bias=True,
+                                          workspace=workspace, name=name + '_sc')
+        sum = mx.sym.ElementWiseSum(*[conv3, shortcut], name=name + '_plus')
     return sum
 
 
