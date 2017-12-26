@@ -118,3 +118,7 @@ def expand_bbox_regression_targets(bbox_targets_data, num_classes):
         bbox_weights[index, start:end] = config.TRAIN.BBOX_WEIGHTS
     return bbox_targets, bbox_weights
 
+def compute_keypoint_label(allrois, keypoints):
+    n_rois = allrois.shape[0]
+    keypoint_labels = np.zeros((n_rois, 14 * 56 * 56))
+    return keypoint_labels

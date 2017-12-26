@@ -32,6 +32,7 @@ class ProposalTargetOperator(mx.operator.CustomOp):
 
         all_rois = in_data[0].asnumpy()
         gt_boxes = in_data[1].asnumpy()
+        gt_keypoints = in_data[2].asnumpy()
 
         # Include ground-truth boxes in the set of candidate rois
         zeros = np.zeros((gt_boxes.shape[0], 1), dtype=gt_boxes.dtype)
@@ -39,8 +40,8 @@ class ProposalTargetOperator(mx.operator.CustomOp):
         # Sanity check: single batch only
         assert np.all(all_rois[:, 0] == 0), 'Only single item batches are supported'
 
-        rois, labels, bbox_targets, bbox_weights = \
-            sample_rois(all_rois, fg_rois_per_image, rois_per_image, self._num_classes, gt_boxes=gt_boxes)
+        rois, labels, bbox_targets, bbox_weights, keypoints_label = \
+            sample_rois(all_rois, fg_rois_per_image, rois_per_image, self._num_classes, gt_boxes=gt_boxes, gt_keypoints=gt_keypoints)
 
         if logger.level == logging.DEBUG:
             logger.debug("labels: %s" % labels)
@@ -54,12 +55,13 @@ class ProposalTargetOperator(mx.operator.CustomOp):
             logger.debug('num bg avg: %d' % (self._bg_num / self._count))
             logger.debug('ratio: %.3f' % (float(self._fg_num) / float(self._bg_num)))
 
-        for ind, val in enumerate([rois, labels, bbox_targets, bbox_weights]):
+        for ind, val in enumerate([rois, labels, bbox_targets, bbox_weights, keypoints_label]):
             self.assign(out_data[ind], req[ind], val)
 
     def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
         self.assign(in_grad[0], req[0], 0)
         self.assign(in_grad[1], req[1], 0)
+        self.assign(in_grad[2], req[2], 0)
 
 
 @mx.operator.register('proposal_target')
@@ -72,22 +74,24 @@ class ProposalTargetProp(mx.operator.CustomOpProp):
         self._fg_fraction = float(fg_fraction)
 
     def list_arguments(self):
-        return ['rois', 'gt_boxes']
+        return ['rois', 'gt_boxes', 'gt_keypoints']
 
     def list_outputs(self):
-        return ['rois_output', 'label', 'bbox_target', 'bbox_weight']
+        return ['rois_output', 'label', 'bbox_target', 'bbox_weight', 'keypoints_label']
 
     def infer_shape(self, in_shape):
         rpn_rois_shape = in_shape[0]
         gt_boxes_shape = in_shape[1]
+        gt_keypoints_shape = in_shape[2]
 
         output_rois_shape = (self._batch_rois, 5)
         label_shape = (self._batch_rois, )
         bbox_target_shape = (self._batch_rois, self._num_classes * 4)
         bbox_weight_shape = (self._batch_rois, self._num_classes * 4)
+        keypoints_label_shape = (self._batch_rois, 14 * 56 * 56)
 
-        return [rpn_rois_shape, gt_boxes_shape], \
-               [output_rois_shape, label_shape, bbox_target_shape, bbox_weight_shape]
+        return [rpn_rois_shape, gt_boxes_shape, gt_keypoints_shape], \
+               [output_rois_shape, label_shape, bbox_target_shape, bbox_weight_shape, keypoints_label_shape]
 
     def create_operator(self, ctx, shapes, dtypes):
         return ProposalTargetOperator(self._num_classes, self._batch_images, self._batch_rois, self._fg_fraction)

@@ -19,7 +19,7 @@ import cv2
 from ..config import config
 from ..io.image import get_image, tensor_vstack
 from ..processing.bbox_transform import bbox_overlaps, bbox_transform, bbox_pred
-from ..processing.bbox_regression import expand_bbox_regression_targets
+from ..processing.bbox_regression import expand_bbox_regression_targets, compute_keypoint_label
 
 
 def get_rcnn_testbatch(roidb):
@@ -109,7 +109,7 @@ def get_rcnn_batch(roidb):
 
 
 def sample_rois(rois, fg_rois_per_image, rois_per_image, num_classes,
-                labels=None, overlaps=None, bbox_targets=None, gt_boxes=None):
+                labels=None, overlaps=None, bbox_targets=None, gt_boxes=None, gt_keypoints=None):
     """
     generate random sample of ROIs comprising foreground and background examples
     :param rois: all_rois [n, 4]; e2e: [n, 5] with batch_index
@@ -161,6 +161,18 @@ def sample_rois(rois, fg_rois_per_image, rois_per_image, num_classes,
     labels[fg_rois_per_this_image:] = 0
     rois = rois[keep_indexes]
 
+    # tmp_blob = config.TRAIN.IMAGE_BLOB.copy()
+    # pos_index = np.where(labels != 0)[0]
+    # for tmp_index in pos_index:
+    #     cv2.rectangle(tmp_blob, (rois[tmp_index, 1], rois[tmp_index, 2]), (rois[tmp_index, 3], rois[tmp_index, 4]), (0, 255, 0))
+    # neg_index = np.where(labels == 0)[0]
+    # for tmp_index in neg_index:
+    #     cv2.rectangle(tmp_blob, (rois[tmp_index, 1], rois[tmp_index, 2]), (rois[tmp_index, 3], rois[tmp_index, 4]), (0, 0, 255))
+    # for tmp_gt in gt_boxes:
+    #     cv2.rectangle(tmp_blob, (tmp_gt[0], tmp_gt[1]), (tmp_gt[2], tmp_gt[3]), (255, 0, 0), 2)
+    # cv2.imshow('rcnn', tmp_blob)
+    # cv2.waitKey()
+
     # load or compute bbox_target
     if bbox_targets is not None:
         bbox_target_data = bbox_targets[keep_indexes, :]
@@ -174,7 +186,12 @@ def sample_rois(rois, fg_rois_per_image, rois_per_image, num_classes,
     bbox_targets, bbox_weights = \
         expand_bbox_regression_targets(bbox_target_data, num_classes)
 
-    return rois, labels, bbox_targets, bbox_weights
+    if gt_keypoints is not None:
+        keypoints_label = compute_keypoint_label(rois, gt_keypoints)
+    else:
+        assert False, 'gt_keypoitns is None'
+
+    return rois, labels, bbox_targets, bbox_weights, keypoints_label
 
 def sample_rois_fpn(rois, fg_rois_per_image, rois_per_image, num_classes,
                     labels=None, overlaps=None, bbox_targets=None, gt_boxes=None):

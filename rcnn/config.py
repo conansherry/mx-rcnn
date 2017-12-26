@@ -96,7 +96,7 @@ default = edict()
 default.network = 'vgg'
 default.pretrained = 'model/vgg16'
 default.pretrained_epoch = 0
-default.base_lr = 0.0004
+default.base_lr = 0.004
 # default dataset
 default.dataset = 'PascalVOC'
 default.image_set = '2007_trainval'
@@ -104,7 +104,7 @@ default.test_image_set = '2007_test'
 default.root_path = 'data'
 default.dataset_path = 'data/VOCdevkit'
 # default training
-default.frequent = 1
+default.frequent = 20
 default.kvstore = 'device'
 # default e2e
 default.e2e_prefix = 'model/e2e'
@@ -139,7 +139,7 @@ network.vgg_fpn.FIXED_PARAMS = ['conv1', 'conv2']
 network.vgg_fpn.FIXED_PARAMS_SHARED = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5']
 
 network.resnet = edict()
-network.resnet.pretrained = 'model/resnet-101'
+network.resnet.pretrained = 'model/resnet-34'
 network.resnet.pretrained_epoch = 0
 network.resnet.PIXEL_MEANS = np.array([0, 0, 0])
 network.resnet.IMAGE_STRIDE = 0
@@ -185,6 +185,12 @@ dataset.Cityscape.ANCHOR_SCALES = (8,)
 dataset.Cityscape.ANCHOR_RATIOS = (0.5, 1, 2)
 dataset.Cityscape.NUM_ANCHORS = len(dataset.Cityscape.ANCHOR_SCALES) * len(dataset.Cityscape.ANCHOR_RATIOS)
 dataset.Cityscape.CLASS_ID = [0, 24, 25, 26, 27, 28, 31, 32, 33]
+
+dataset.AiChallenge = edict()
+dataset.AiChallenge.NUM_CLASSES = 2
+dataset.AiChallenge.image_set = 'val'
+dataset.AiChallenge.test_image_set = 'val'
+dataset.AiChallenge.dataset_path = r'E:\ai_challenger'
 
 def generate_config(_network, _dataset):
     for k, v in network[_network].items():

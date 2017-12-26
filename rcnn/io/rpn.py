@@ -57,12 +57,13 @@ def get_rpn_batch(roidb):
         gt_boxes = np.empty((roidb[0]['boxes'].shape[0], 5), dtype=np.float32)
         gt_boxes[:, 0:4] = roidb[0]['boxes'][gt_inds, :]
         gt_boxes[:, 4] = roidb[0]['gt_classes'][gt_inds]
+        gt_keypoints = roidb[0]['keypoints']
     else:
         gt_boxes = np.empty((0, 5), dtype=np.float32)
 
     data = {'data': im_array,
             'im_info': im_info}
-    label = {'gt_boxes': gt_boxes}
+    label = {'gt_boxes': gt_boxes, 'gt_keypoints': gt_keypoints}
 
     return data, label
 

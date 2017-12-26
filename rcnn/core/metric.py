@@ -14,7 +14,9 @@ def get_rcnn_names():
     pred = ['rcnn_cls_prob', 'rcnn_bbox_loss']
     label = ['rcnn_label', 'rcnn_bbox_target', 'rcnn_bbox_weight']
     if config.TRAIN.END2END:
+        pred.append('mask_prob')
         pred.append('rcnn_label')
+        pred.append('keypoints_label')
         rpn_pred, rpn_label = get_rpn_names()
         pred = rpn_pred + pred
         label = rpn_label
@@ -60,6 +62,30 @@ class RCNNAccMetric(mx.metric.EvalMetric):
 
         last_dim = pred.shape[-1]
         pred_label = pred.asnumpy().reshape(-1, last_dim).argmax(axis=1).astype('int32')
+        label = label.asnumpy().reshape(-1,).astype('int32')
+
+        no_ignore_index = np.where(label != -1)[0]
+        pred_label = pred_label[no_ignore_index]
+        label = label[no_ignore_index]
+
+        self.sum_metric += np.sum(pred_label.flat == label.flat)
+        self.num_inst += len(pred_label.flat)
+
+class RCNNKeyAccMetric(mx.metric.EvalMetric):
+    def __init__(self):
+        super(RCNNKeyAccMetric, self).__init__('RCNNKeypointAcc')
+        self.e2e = config.TRAIN.END2END
+        self.pred, self.label = get_rcnn_names()
+
+    def update(self, labels, preds):
+        pred = preds[self.pred.index('mask_prob')]
+        if self.e2e:
+            label = preds[self.pred.index('keypoints_label')]
+        else:
+            label = labels[self.label.index('keypoints_label')]
+
+        last_dim = pred.shape[-1]
+        pred_label = pred.asnumpy().reshape(-1, 2, last_dim).argmax(axis=1).astype('int32').reshape(-1,)
         label = label.asnumpy().reshape(-1,).astype('int32')
 
         no_ignore_index = np.where(label != -1)[0]

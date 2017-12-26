@@ -93,6 +93,7 @@ def get_resnet_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCH
     rpn_label = mx.symbol.Variable(name='label')
     rpn_bbox_target = mx.symbol.Variable(name='bbox_target')
     rpn_bbox_weight = mx.symbol.Variable(name='bbox_weight')
+    gt_keypoints = mx.symbol.Variable(name='gt_keypoints')
 
     # shared convolutional layers
     conv_feat = get_resnet_conv(data)
@@ -127,24 +128,26 @@ def get_resnet_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCH
             cls_prob=rpn_cls_act_reshape, bbox_pred=rpn_bbox_pred, im_info=im_info, name='rois',
             feature_stride=config.RPN_FEAT_STRIDE, scales=tuple(config.ANCHOR_SCALES), ratios=tuple(config.ANCHOR_RATIOS),
             rpn_pre_nms_top_n=config.TRAIN.RPN_PRE_NMS_TOP_N, rpn_post_nms_top_n=config.TRAIN.RPN_POST_NMS_TOP_N,
-            threshold=config.TRAIN.RPN_NMS_THRESH, rpn_min_size=config.TRAIN.RPN_MIN_SIZE)
+            threshold=config.TRAIN.RPN_NMS_THRESH, rpn_min_size=config.RPN_FEAT_STRIDE)
     else:
         rois = mx.symbol.Custom(
             cls_prob=rpn_cls_act_reshape, bbox_pred=rpn_bbox_pred, im_info=im_info, name='rois',
             op_type='proposal', feat_stride=config.RPN_FEAT_STRIDE,
             scales=tuple(config.ANCHOR_SCALES), ratios=tuple(config.ANCHOR_RATIOS),
             rpn_pre_nms_top_n=config.TRAIN.RPN_PRE_NMS_TOP_N, rpn_post_nms_top_n=config.TRAIN.RPN_POST_NMS_TOP_N,
-            threshold=config.TRAIN.RPN_NMS_THRESH, rpn_min_size=config.TRAIN.RPN_MIN_SIZE)
+            threshold=config.TRAIN.RPN_NMS_THRESH, rpn_min_size=config.RPN_FEAT_STRIDE)
 
     # ROI proposal target
     gt_boxes_reshape = mx.symbol.Reshape(data=gt_boxes, shape=(-1, 5), name='gt_boxes_reshape')
-    group = mx.symbol.Custom(rois=rois, gt_boxes=gt_boxes_reshape, op_type='proposal_target',
+    gt_keypoints_reshape = mx.symbol.Reshape(data=gt_keypoints, shape=(-1, 14 * 3), name='gt_boxes_reshape')
+    group = mx.symbol.Custom(rois=rois, gt_boxes=gt_boxes_reshape, gt_keypoints=gt_keypoints_reshape, op_type='proposal_target',
                              num_classes=num_classes, batch_images=config.TRAIN.BATCH_IMAGES,
                              batch_rois=config.TRAIN.BATCH_ROIS, fg_fraction=config.TRAIN.FG_FRACTION)
     rois = group[0]
     label = group[1]
     bbox_target = group[2]
     bbox_weight = group[3]
+    keypoints_label = group[4]
 
     # Fast R-CNN
     roi_pool = mx.symbol.ROIPooling(
@@ -160,18 +163,56 @@ def get_resnet_train(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCH
 
     # classification
     cls_score = mx.symbol.FullyConnected(name='cls_score', data=pool1, num_hidden=num_classes)
-    cls_prob = mx.symbol.SoftmaxOutput(name='cls_prob', data=cls_score, label=label, normalization='batch')
+    cls_prob = mx.symbol.SoftmaxOutput(name='cls_prob', data=cls_score, label=label, normalization='valid', use_ignore=True, ignore_label=-1)
     # bounding box regression
     bbox_pred = mx.symbol.FullyConnected(name='bbox_pred', data=pool1, num_hidden=num_classes * 4)
     bbox_loss_ = bbox_weight * mx.symbol.smooth_l1(name='bbox_loss_', scalar=1.0, data=(bbox_pred - bbox_target))
     bbox_loss = mx.sym.MakeLoss(name='bbox_loss', data=bbox_loss_, grad_scale=1.0 / config.TRAIN.BATCH_ROIS)
 
+    # KEYPOINT
+    mask_conv_1 = mx.symbol.Convolution(
+        data=roi_pool, kernel=(3, 3), pad=(1, 1), num_filter=256, workspace=512,
+        name="mask_conv_1")
+    mask_relu_1 = mx.symbol.Activation(data=mask_conv_1, act_type="relu", name="mask_relu_1")
+    mask_conv_2 = mx.symbol.Convolution(
+        data=mask_relu_1, kernel=(3, 3), pad=(1, 1), num_filter=256, workspace=512,
+        name="mask_conv_2")
+    mask_relu_2 = mx.symbol.Activation(data=mask_conv_2, act_type="relu", name="mask_relu_2")
+    mask_conv_3 = mx.symbol.Convolution(
+        data=mask_relu_2, kernel=(3, 3), pad=(1, 1), num_filter=256, workspace=512,
+        name="mask_conv_3")
+    mask_relu_3 = mx.symbol.Activation(data=mask_conv_3, act_type="relu", name="mask_relu_3")
+    mask_conv_4 = mx.symbol.Convolution(
+        data=mask_relu_3, kernel=(3, 3), pad=(1, 1), num_filter=256, workspace=512,
+        name="mask_conv_4")
+    mask_relu_4 = mx.symbol.Activation(data=mask_conv_4, act_type="relu", name="mask_relu_4")
+    mask_deconv_1 = mx.symbol.Deconvolution(data=mask_relu_4, kernel=(4, 4), stride=(2, 2), num_filter=256, pad=(1, 1),
+                                            workspace=512, name="mask_deconv1")
+    mask_deconv_2 = mx.symbol.Convolution(data=mask_deconv_1, kernel=(1, 1), num_filter=256,
+                                          workspace=512, name="mask_deconv2")
+    mask_deconv_3 = mx.symbol.Deconvolution(data=mask_deconv_2, kernel=(4, 4), stride=(2, 2), num_filter=256,
+                                            pad=(1, 1),
+                                            workspace=512, name="mask_deconv3")
+    mask_deconv_4 = mx.symbol.Convolution(data=mask_deconv_3, kernel=(1, 1), num_filter=14 * 2,
+                                          workspace=512, name="mask_deconv4")
+    mask_deconv_4 = mx.symbol.Reshape(data=mask_deconv_4, shape=(0, 2, -1),
+                                      name='mask_deconv_4_reshape')
+    mask_prob = mx.symbol.SoftmaxOutput(name='mask_prob', data=mask_deconv_4, label=keypoints_label,
+                                        normalization='valid',
+                                        multi_output=True, use_ignore=True, ignore_label=-1)
+
     # reshape output
     label = mx.symbol.Reshape(data=label, shape=(config.TRAIN.BATCH_IMAGES, -1), name='label_reshape')
     cls_prob = mx.symbol.Reshape(data=cls_prob, shape=(config.TRAIN.BATCH_IMAGES, -1, num_classes), name='cls_prob_reshape')
+
+    keypoints_label = mx.symbol.Reshape(data=keypoints_label, shape=(config.TRAIN.BATCH_IMAGES, -1, 14 * 56 * 56),
+                                        name='keypoints_label_reshape')
+    mask_prob = mx.symbol.Reshape(data=mask_prob, shape=(config.TRAIN.BATCH_IMAGES, -1, 2, 14 * 56 * 56),
+                                 name='mask_prob_reshape')
+
     bbox_loss = mx.symbol.Reshape(data=bbox_loss, shape=(config.TRAIN.BATCH_IMAGES, -1, 4 * num_classes), name='bbox_loss_reshape')
 
-    group = mx.symbol.Group([rpn_cls_prob, rpn_bbox_loss, cls_prob, bbox_loss, mx.symbol.BlockGrad(label)])
+    group = mx.symbol.Group([rpn_cls_prob, rpn_bbox_loss, cls_prob, bbox_loss, mask_prob, mx.symbol.BlockGrad(label), mx.symbol.BlockGrad(keypoints_label)])
     return group
 
 
@@ -203,14 +244,14 @@ def get_resnet_test(num_classes=config.NUM_CLASSES, num_anchors=config.NUM_ANCHO
             cls_prob=rpn_cls_prob_reshape, bbox_pred=rpn_bbox_pred, im_info=im_info, name='rois',
             feature_stride=config.RPN_FEAT_STRIDE, scales=tuple(config.ANCHOR_SCALES), ratios=tuple(config.ANCHOR_RATIOS),
             rpn_pre_nms_top_n=config.TEST.RPN_PRE_NMS_TOP_N, rpn_post_nms_top_n=config.TEST.RPN_POST_NMS_TOP_N,
-            threshold=config.TEST.RPN_NMS_THRESH, rpn_min_size=config.TEST.RPN_MIN_SIZE)
+            threshold=config.TEST.RPN_NMS_THRESH, rpn_min_size=config.RPN_FEAT_STRIDE)
     else:
         rois = mx.symbol.Custom(
             cls_prob=rpn_cls_prob_reshape, bbox_pred=rpn_bbox_pred, im_info=im_info, name='rois',
             op_type='proposal', feat_stride=config.RPN_FEAT_STRIDE,
             scales=tuple(config.ANCHOR_SCALES), ratios=tuple(config.ANCHOR_RATIOS),
             rpn_pre_nms_top_n=config.TEST.RPN_PRE_NMS_TOP_N, rpn_post_nms_top_n=config.TEST.RPN_POST_NMS_TOP_N,
-            threshold=config.TEST.RPN_NMS_THRESH, rpn_min_size=config.TEST.RPN_MIN_SIZE)
+            threshold=config.TEST.RPN_NMS_THRESH, rpn_min_size=config.RPN_FEAT_STRIDE)
 
     # Fast R-CNN
     roi_pool = mx.symbol.ROIPooling(

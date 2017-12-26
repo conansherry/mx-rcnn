@@ -166,10 +166,15 @@ class IMDB(object):
             boxes[:, 0] = roi_rec['width'] - oldx2 - 1
             boxes[:, 2] = roi_rec['width'] - oldx1 - 1
             assert (boxes[:, 2] >= boxes[:, 0]).all()
+
+            # To do, swap keypoints
+            keypoints = roi_rec['keypoints'].copy()
+
             entry = {'image': roi_rec['image'],
                      'height': roi_rec['height'],
                      'width': roi_rec['width'],
                      'boxes': boxes,
+                     'keypoints': keypoints,
                      'gt_classes': roidb[i]['gt_classes'],
                      'gt_overlaps': roidb[i]['gt_overlaps'],
                      'max_classes': roidb[i]['max_classes'],
